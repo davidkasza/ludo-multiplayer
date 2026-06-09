@@ -1,0 +1,37 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "ludo-app-569c2",
+          "appId": "1:32046134053:android:ec9f4719ecd2b624f4e0cc",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "ludo-app-569c2",
+          "configurations": {
+            "android": "1:32046134053:android:ec9f4719ecd2b624f4e0cc",
+            "ios": "1:32046134053:ios:25b9c42b20212479f4e0cc",
+            "web": "1:32046134053:web:f8e0b6cdfa638a32f4e0cc"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
