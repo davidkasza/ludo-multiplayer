@@ -30,7 +30,7 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release.jks
           echo "keyAlias=${{ secrets.KEY_ALIAS }}" > android/key.properties
           echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
-          echo "storeFile=app/release.jks" >> android/key.properties
+          echo "storeFile=release.jks" >> android/key.properties
           echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> android/key.properties
 
       - name: Install dependencies
