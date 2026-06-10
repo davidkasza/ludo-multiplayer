@@ -45,5 +45,5 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.GCLOUD_SERVICE_ACCOUNT_CREDENTIALS }}
           packageName: com.davidkasza.ludo
           releaseFiles: build/app/outputs/bundle/release/app-release.aab
-          tracks: '[{"track": "internal"}]'
+          track: internal
           status: completed
