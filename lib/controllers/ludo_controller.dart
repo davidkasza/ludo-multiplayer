@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../models/ludo_models.dart';
 
 class LudoController extends ChangeNotifier {
@@ -12,14 +13,16 @@ class LudoController extends ChangeNotifier {
 
   User? user;
   String gameId = "";
-  Map<String, dynamic>? gameData;
+  LudoGame? game;
   String statusMessage = "";
 
   bool isDiceRolling = false;
-  LocalMovingPiece? localMovingPiece;
-  double hopFrame = 0.0;
 
+  final ValueNotifier<double> hopFrameNotifier = ValueNotifier<double>(0.0);
+
+  LocalMovingPiece? localMovingPiece;
   Timer? _hopTimer;
+
   StreamSubscription<DocumentSnapshot>? _gameSubscription;
 
   final List<int> globalSafePlaces = const [0, 3, 8, 16, 21, 26, 29, 34, 42, 47];
@@ -42,40 +45,47 @@ class LudoController extends ChangeNotifier {
   void _startHopAnimation() {
     _hopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
       if (localMovingPiece != null) {
-        hopFrame += 0.2;
-        notifyListeners();
+        hopFrameNotifier.value += 0.2;
       }
     });
   }
 
+  @override
+  void dispose() {
+    _hopTimer?.cancel();
+    _gameSubscription?.cancel();
+    hopFrameNotifier.dispose();
+    super.dispose();
+  }
+
   int getPlayerIndex(String uid) {
-    if (gameData == null || gameData!['players'] == null) return 0;
-    return (gameData!['players'] as List).indexOf(uid);
+    if (game == null) return 0;
+    return game!.players.indexOf(uid);
   }
 
   int get myPlayerIndex => user != null ? getPlayerIndex(user!.uid) : 0;
-  bool get isMyTurn => gameData?['currentTurn'] == user?.uid;
-  bool get canRoll => isMyTurn && gameData != null && gameData!['hasRolled'] == false && gameData!['status'] == 'playing' && !isDiceRolling;
+  bool get isMyTurn => game?.currentTurn == user?.uid;
+  bool get canRoll => isMyTurn && game != null && !game!.hasRolled && game!.status == 'playing' && !isDiceRolling;
 
   String getPlayerDisplayTitle(String uid) {
-    if (gameData?['playerNames'] != null && gameData!['playerNames'][uid] != null) {
-      return gameData!['playerNames'][uid];
+    if (game?.playerNames.containsKey(uid) == true) {
+      return game!.playerNames[uid]!;
     }
     return getPlayerIndex(uid) == 0 ? "BLUE (P1)" : "RED (P2)";
   }
 
   List<LudoPiece> getMyPieces() {
-    if (gameData == null || user == null) return [];
-    var piecesRaw = gameData!['pieces'][user!.uid];
-    if (piecesRaw == null) return [];
-    return (piecesRaw as List).map((p) => LudoPiece.fromMap(p)).toList();
+    if (game == null || user == null) return [];
+    return game!.pieces[user!.uid] ?? [];
   }
 
   void listenGame(String id) {
     _gameSubscription?.cancel();
     _gameSubscription = _db.collection('games').doc(id).snapshots().listen((snap) {
-      gameData = snap.data();
-      notifyListeners();
+      if (snap.exists && snap.data() != null) {
+        game = LudoGame.fromMap(snap.data()!);
+        notifyListeners();
+      }
     });
   }
 
@@ -85,7 +95,10 @@ class LudoController extends ChangeNotifier {
     notifyListeners();
 
     int initialPos = isTestMode ? 49 : -1;
-    final defaultPieces = List.generate(4, (i) => LudoPiece(id: i + 1, pos: initialPos, inHome: false).toMap());
+    final defaultPieces = List.generate(
+        4,
+            (i) => LudoPiece(id: i + 1, pos: initialPos, inHome: false).toMap()
+    );
 
     final docRef = await _db.collection('games').add({
       'players': [user!.uid],
@@ -97,7 +110,7 @@ class LudoController extends ChangeNotifier {
       'winnerUid': '',
       'boardId': selectedBoard,
       'isTestModeActive': isTestMode,
-      'activeChat': {'sender': '', 'message': '', 'timestamp': 0},
+      'activeChat': LudoChat(sender: '', message: '', timestamp: 0).toMap(),
       'pieces': {user!.uid: defaultPieces}
     });
 
@@ -111,41 +124,42 @@ class LudoController extends ChangeNotifier {
     notifyListeners();
 
     final ref = _db.collection('games').doc(inputId);
+    final snap = await ref.get();
 
-    try {
-      await _db.runTransaction((transaction) async {
-        final snap = await transaction.get(ref);
-        if (!snap.exists) throw Exception("RoomNotFound");
-
-        final data = snap.data()!;
-        List players = data['players'];
-        if (players.length >= 2) throw Exception("RoomFull");
-
-        int initialPos = data['isTestModeActive'] == true ? 49 : -1;
-        final defaultPieces = List.generate(4, (i) => LudoPiece(id: i + 1, pos: initialPos, inHome: false).toMap());
-
-        Map playerNames = Map.from(data['playerNames'])..addAll({user!.uid: playerName.trim()});
-        Map pieces = Map.from(data['pieces'])..addAll({user!.uid: defaultPieces});
-
-        transaction.update(ref, {
-          'players': FieldValue.arrayUnion([user!.uid]),
-          'playerNames': playerNames,
-          'pieces': pieces,
-          'status': 'playing'
-        });
-      });
-      gameId = inputId;
-      listenGame(inputId);
-    } catch (e) {
-      if (e.toString().contains("RoomNotFound")) {
-        statusMessage = "❌ Game not found!";
-      } else if (e.toString().contains("RoomFull")) {
-        statusMessage = "❌ This room is already full!";
-      } else {
-        statusMessage = "❌ Error joining game!";
-      }
+    if (!snap.exists) {
+      statusMessage = "❌ Game not found!";
       notifyListeners();
+      return;
     }
+
+    final data = snap.data()!;
+    List players = data['players'];
+    if (players.length >= 2) {
+      statusMessage = "❌ This room is already full!";
+      notifyListeners();
+      return;
+    }
+
+    int initialPos = data['isTestModeActive'] == true ? 49 : -1;
+    Map playerNames = Map.from(data['playerNames'])..addAll({user!.uid: playerName.trim()});
+    Map pieces = Map.from(data['pieces'])..addAll({
+      user!.uid: [
+        {'id': 1, 'pos': initialPos, 'inHome': false},
+        {'id': 2, 'pos': initialPos, 'inHome': false},
+        {'id': 3, 'pos': initialPos, 'inHome': false},
+        {'id': 4, 'pos': initialPos, 'inHome': false},
+      ]
+    });
+
+    await ref.update({
+      'players': FieldValue.arrayUnion([user!.uid]),
+      'playerNames': playerNames,
+      'pieces': pieces,
+      'status': 'playing'
+    });
+
+    gameId = inputId;
+    listenGame(inputId);
   }
 
   Future<void> rollDice(int cheatDiceValue) async {
@@ -154,7 +168,9 @@ class LudoController extends ChangeNotifier {
     isDiceRolling = true;
     notifyListeners();
 
-    int value = cheatDiceValue > 0 && gameData?['isTestModeActive'] == true ? cheatDiceValue : _random.nextInt(6) + 1;
+    int value = cheatDiceValue > 0 && game?.isTestModeActive == true
+        ? cheatDiceValue
+        : _random.nextInt(6) + 1;
 
     await Future.delayed(const Duration(milliseconds: 600));
     isDiceRolling = false;
@@ -169,10 +185,22 @@ class LudoController extends ChangeNotifier {
 
     if (!hasValidMove) {
       if (value == 6) {
-        await _db.collection('games').doc(gameId).update({'diceValue': value, 'hasRolled': false, 'currentTurn': user!.uid});
+        statusMessage = "🎲 You rolled a 6, but you have no valid moves. Roll again!";
+        notifyListeners();
+        await _db.collection('games').doc(gameId).update({
+          'diceValue': value,
+          'hasRolled': false,
+          'currentTurn': user!.uid
+        });
       } else {
-        String nextPlayer = (gameData!['players'] as List).firstWhere((p) => p != user!.uid, orElse: () => user!.uid);
-        await _db.collection('games').doc(gameId).update({'diceValue': value, 'hasRolled': false, 'currentTurn': nextPlayer});
+        String nextPlayer = game!.players.firstWhere((p) => p != user!.uid, orElse: () => user!.uid);
+        statusMessage = "🎲 Rolled: $value. No available moves, turn skipped.";
+        notifyListeners();
+        await _db.collection('games').doc(gameId).update({
+          'diceValue': value,
+          'hasRolled': false,
+          'currentTurn': nextPlayer
+        });
       }
     } else {
       await _db.collection('games').doc(gameId).update({'diceValue': value, 'hasRolled': true});
@@ -180,16 +208,25 @@ class LudoController extends ChangeNotifier {
   }
 
   Future<void> movePiece(int pieceId) async {
-    if (gameId.isEmpty || user == null || gameData == null || !isMyTurn || gameData!['hasRolled'] == false || localMovingPiece != null) return;
+    if (gameId.isEmpty || user == null || game == null || !isMyTurn || !game!.hasRolled || localMovingPiece != null) return;
 
     List<LudoPiece> pieces = getMyPieces();
     var targetPiece = pieces.firstWhere((p) => p.id == pieceId);
-    int dice = gameData!['diceValue'];
+    int dice = game!.diceValue;
 
     if (targetPiece.pos == 5 && targetPiece.inHome) return;
-    if (targetPiece.pos == -1 && dice != 6) return;
-    if (targetPiece.inHome && (targetPiece.pos + dice) > 5) return;
+    if (targetPiece.pos == -1 && dice != 6) {
+      statusMessage = "⚠️ You can only leave the base by rolling a 6!";
+      notifyListeners();
+      return;
+    }
+    if (targetPiece.inHome && (targetPiece.pos + dice) > 5) {
+      statusMessage = "⚠️ Roll too high! You must enter the goal precisely.";
+      notifyListeners();
+      return;
+    }
 
+    statusMessage = "";
     int remainingSteps = targetPiece.pos == -1 ? 1 : dice;
     int virtualPos = targetPiece.pos;
     bool virtualInHome = targetPiece.inHome;
@@ -216,14 +253,9 @@ class LudoController extends ChangeNotifier {
         timer.cancel();
         localMovingPiece = null;
         notifyListeners();
-
-        try {
-          await _finalizeFirebaseMove(pieceId, virtualPos, virtualInHome, targetPiece);
-        } catch (e) {
-          debugPrint("Move synchronization failed: $e");
-        }
+        _finalizeFirebaseMove(pieceId, virtualPos, virtualInHome, targetPiece);
       } else {
-        localMovingPiece = LocalMovingPiece(id: pieceId, currentVisualPos: virtualPos, inHome: virtualInHome, stepCount: remainingSteps);
+        localMovingPiece = localMovingPiece!.copyWith(currentVisualPos: virtualPos, inHome: virtualInHome, stepCount: remainingSteps);
         notifyListeners();
       }
     });
@@ -231,31 +263,28 @@ class LudoController extends ChangeNotifier {
 
   Future<void> _finalizeFirebaseMove(int pieceId, int finalPos, bool finalInHome, LudoPiece targetPiece) async {
     List<LudoPiece> pieces = getMyPieces();
-    int dice = gameData!['diceValue'];
+    int dice = game!.diceValue;
 
     List<Map<String, dynamic>> updatedPieces = pieces.map((p) {
       if (p.id != pieceId) return p.toMap();
-      return {'id': p.id, 'pos': finalPos, 'inHome': finalInHome};
+      return p.copyWith(pos: finalPos, inHome: finalInHome).toMap();
     }).toList();
 
     bool didCapture = false;
-    String? opponentUid = (gameData!['players'] as List).firstWhere((p) => p != user!.uid, orElse: () => null);
-    List? opponentPiecesRaw = opponentUid != null ? gameData!['pieces'][opponentUid] : null;
+    String opponentUid = game!.players.firstWhere((p) => p != user!.uid, orElse: () => '');
+    List<LudoPiece>? opponentPieces = opponentUid.isNotEmpty ? game!.pieces[opponentUid] : null;
     List<Map<String, dynamic>>? updatedOpponentPieces;
 
-    if (opponentPiecesRaw != null && !finalInHome) {
+    if (opponentPieces != null && !finalInHome) {
       int myGlobalPos = myPlayerIndex == 0 ? finalPos : (finalPos + 26) % 52;
       if (!globalSafePlaces.contains(myGlobalPos)) {
-        int opponentPlayerIndex = getPlayerIndex(opponentUid!);
-
-        updatedOpponentPieces = opponentPiecesRaw.map((opMap) {
-          var op = LudoPiece.fromMap(opMap);
+        int opponentPlayerIndex = getPlayerIndex(opponentUid);
+        updatedOpponentPieces = opponentPieces.map((op) {
           if (op.pos == -1 || op.inHome) return op.toMap();
-
           int opGlobalPos = opponentPlayerIndex == 0 ? op.pos : (op.pos + 26) % 52;
           if (opGlobalPos == myGlobalPos) {
             didCapture = true;
-            return {'id': op.id, 'pos': -1, 'inHome': false};
+            return op.copyWith(pos: -1, inHome: false).toMap();
           }
           return op.toMap();
         }).toList();
@@ -263,15 +292,25 @@ class LudoController extends ChangeNotifier {
     }
 
     bool isWinner = updatedPieces.every((p) => p['inHome'] == true && p['pos'] == 5);
-    String nextPlayer = (gameData!['players'] as List).firstWhere((p) => p != user!.uid, orElse: () => user!.uid);
+    String nextPlayer = game!.players.firstWhere((p) => p != user!.uid, orElse: () => user!.uid);
+
     bool didReachGoal = finalInHome && finalPos == 5 && !(targetPiece.inHome && targetPiece.pos == 5);
 
     if (dice == 6 || didCapture || didReachGoal) {
       nextPlayer = user!.uid;
+      if (dice == 6) statusMessage = "✨ You rolled a 6! You get an extra roll as a reward!";
+      if (didCapture) statusMessage = "💥 You captured an opponent! Extra roll awarded!";
+      if (didReachGoal) statusMessage = "🎉 You reached the goal! You get an extra roll as a reward!";
     }
 
-    Map<String, dynamic> finalAllPieces = Map.from(gameData!['pieces'])..addAll({user!.uid: updatedPieces});
-    if (opponentUid != null && updatedOpponentPieces != null) {
+    Map<String, dynamic> finalAllPieces = {};
+    game!.pieces.forEach((uid, pieceList) {
+      finalAllPieces[uid] = pieceList.map((p) => p.toMap()).toList();
+    });
+
+    finalAllPieces[user!.uid] = updatedPieces;
+
+    if (opponentUid.isNotEmpty && updatedOpponentPieces != null) {
       finalAllPieces[opponentUid] = updatedOpponentPieces;
     }
 
@@ -292,7 +331,8 @@ class LudoController extends ChangeNotifier {
   }
 
   Future<void> teleportPiece(int pieceId, String valueStr) async {
-    if (gameId.isEmpty || user == null) return;
+    if (gameId.isEmpty || user == null || game == null) return;
+
     List<LudoPiece> pieces = getMyPieces();
     int newPos = -1;
     bool newInHome = false;
@@ -310,28 +350,16 @@ class LudoController extends ChangeNotifier {
 
     List<Map<String, dynamic>> updatedPieces = pieces.map((p) {
       if (p.id != pieceId) return p.toMap();
-      return {'id': p.id, 'pos': newPos, 'inHome': newInHome};
+      return p.copyWith(pos: newPos, inHome: newInHome).toMap();
     }).toList();
 
-    await _db.collection('games').doc(gameId).update({
-      FieldPath(['pieces', user!.uid]): updatedPieces
-    });
+    await _db.collection('games').doc(gameId).update({'pieces.${user!.uid}': updatedPieces});
   }
 
   void quitToMenu() {
-    _gameSubscription?.cancel();
-    _gameSubscription = null;
     gameId = "";
-    gameData = null;
+    game = null;
     statusMessage = "";
-    localMovingPiece = null;
     notifyListeners();
-  }
-
-  @override
-  void dispose() {
-    _hopTimer?.cancel();
-    _gameSubscription?.cancel();
-    super.dispose();
   }
 }

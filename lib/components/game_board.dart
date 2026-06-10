@@ -34,29 +34,35 @@ class GameBoard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(15),
                 child: Stack(
                   children: [
-                    RepaintBoundary(
-                      child: CustomPaint(
-                        size: Size.square(boardSize),
-                        painter: const StaticBoardPainter(),
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          size: Size.square(boardSize),
+                          painter: const StaticBoardPainter(),
+                        ),
                       ),
                     ),
-                    // Animated token layers
-                    RepaintBoundary(
-                      child: AnimatedBuilder(
-                        animation: controller,
-                        builder: (context, _) {
-                          return CustomPaint(
-                            size: Size.square(boardSize),
-                            painter: DynamicPiecesPainter(
-                              gameData: controller.gameData,
-                              currentUserId: controller.user?.uid,
-                              myPlayerIndex: controller.myPlayerIndex,
-                              isMyTurn: controller.isMyTurn,
-                              localMovingPiece: controller.localMovingPiece,
-                              hopFrame: controller.hopFrame,
-                            ),
-                          );
-                        },
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: AnimatedBuilder(
+                          animation: Listenable.merge([
+                            controller,
+                            controller.hopFrameNotifier,
+                          ]),
+                          builder: (context, _) {
+                            return CustomPaint(
+                              size: Size.square(boardSize),
+                              painter: DynamicPiecesPainter(
+                                gameData: controller.game?.toMap(),
+                                currentUserId: controller.user?.uid,
+                                myPlayerIndex: controller.myPlayerIndex,
+                                isMyTurn: controller.isMyTurn,
+                                localMovingPiece: controller.localMovingPiece,
+                                hopFrame: controller.hopFrameNotifier.value,
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ],
@@ -70,7 +76,7 @@ class GameBoard extends StatelessWidget {
   }
 
   void _handleTap(TapDownDetails details, double boardSize) {
-    if (controller.gameData == null || !controller.isMyTurn) return;
+    if (controller.game == null || !controller.isMyTurn) return;
 
     double scale = LudoBoardMapper.baseResolution / boardSize;
     double canvasX = details.localPosition.dx * scale;

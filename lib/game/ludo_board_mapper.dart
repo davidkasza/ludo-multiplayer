@@ -21,21 +21,24 @@ class LudoBoardMapper {
       inHome = localMovingPiece.inHome;
     }
 
+    const double step = ClassicBoard.step;
+    const double offset = ClassicBoard.offset;
+
     if (visualPos == -1) {
       var pt = isPlayerOne ? ClassicBoard.player1BaseGrid[piece.id - 1] : ClassicBoard.player2BaseGrid[piece.id - 1];
-      return Offset(20.0 + pt.x * 50.0, 20.0 + pt.y * 50.0);
+      return Offset(offset + pt.x * step, offset + pt.y * step);
     } else if (inHome) {
       if (visualPos == 5) {
         return isPlayerOne
-            ? const Offset(20.0 + 7.0 * 50.0, 20.0 + 6.5 * 50.0)
-            : const Offset(20.0 + 7.0 * 50.0, 20.0 + 8.5 * 50.0);
+            ? Offset(offset + 7.0 * step, offset + 6.5 * step)
+            : Offset(offset + 7.0 * step, offset + 8.5 * step);
       }
       var pt = isPlayerOne ? ClassicBoard.p1HomeGrid[visualPos] : ClassicBoard.p2HomeGrid[visualPos];
-      return Offset(20.0 + pt.x * 50.0, 20.0 + pt.y * 50.0);
+      return Offset(offset + pt.x * step, offset + pt.y * step);
     } else {
       int actualIndex = isPlayerOne ? visualPos : (visualPos + 26) % 52;
       var pt = ClassicBoard.gridPath[actualIndex];
-      return Offset(20.0 + pt.x * 50.0, 20.0 + pt.y * 50.0);
+      return Offset(offset + pt.x * step, offset + pt.y * step);
     }
   }
 }

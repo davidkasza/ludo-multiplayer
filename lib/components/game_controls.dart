@@ -42,7 +42,7 @@ class _GameControlsState extends State<GameControls> with SingleTickerProviderSt
         builder: (context, _) {
           var c = widget.controller;
 
-          String currentTurnUid = c.gameData?['currentTurn'] ?? "";
+          String currentTurnUid = c.game?.currentTurn ?? "";
           int currentTurnIndex = c.getPlayerIndex(currentTurnUid);
 
           Color avatarBgColor = currentTurnIndex == 0 ? AppColors.blueBase : AppColors.redBase;
@@ -86,11 +86,11 @@ class _GameControlsState extends State<GameControls> with SingleTickerProviderSt
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              c.gameData?['status'] == 'waiting' ? "Waiting..." : c.isMyTurn ? "YOUR TURN!" : c.getPlayerDisplayTitle(c.gameData?['currentTurn'] ?? ""),
+                              c.game?.status == 'waiting' ? "Waiting..." : c.isMyTurn ? "YOUR TURN!" : c.getPlayerDisplayTitle(c.game?.currentTurn ?? ""),
                               style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: Colors.white),
                             ),
                             Text(
-                              c.isMyTurn ? (c.gameData?['hasRolled'] == true ? "Select a piece to move!" : "Tap to roll!") : "Waiting for opponent...",
+                              c.isMyTurn ? (c.game?.hasRolled == true ? "Select a piece to move!" : "Tap to roll!") : "Waiting for opponent...",
                               style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5), fontWeight: FontWeight.bold),
                             )
                           ],
@@ -101,7 +101,7 @@ class _GameControlsState extends State<GameControls> with SingleTickerProviderSt
                     GestureDetector(
                       onTap: c.canRoll ? () => c.rollDice(widget.cheatDiceValue) : null,
                       child: _RollingDiceUI(
-                        value: c.gameData?['diceValue'] ?? 0,
+                        value: c.game?.diceValue ?? 0,
                         isRolling: c.isDiceRolling,
                         size: 42.0,
                       ),
@@ -110,7 +110,7 @@ class _GameControlsState extends State<GameControls> with SingleTickerProviderSt
                 ),
               ),
 
-              if (c.gameData?['isTestModeActive'] == true) ...[
+              if (c.game?.isTestModeActive == true) ...[
                 const SizedBox(height: 6),
                 Container(
                   decoration: BoxDecoration(
@@ -136,7 +136,7 @@ class _GameControlsState extends State<GameControls> with SingleTickerProviderSt
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (c.isMyTurn && c.gameData?['hasRolled'] == false)
+                                if (c.isMyTurn && c.game?.hasRolled == false)
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
