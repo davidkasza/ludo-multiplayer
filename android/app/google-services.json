@@ -76,6 +76,42 @@
           ]
         }
       }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:32046134053:android:83b9efb690c3d594f4e0cc",
+        "android_client_info": {
+          "package_name": "com.davidkasza.ludo"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "32046134053-lvt1t072um8mtkhr78shnfqq3jkqh1kj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBGzQ1Miud8kofEfKYQV2_zZG8b3pfp0Jo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "32046134053-lvt1t072um8mtkhr78shnfqq3jkqh1kj.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "32046134053-g8ts8s5tbg29rti9h1r6vg78uj3nat2b.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.david.ludo"
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "configuration_version": "1"
