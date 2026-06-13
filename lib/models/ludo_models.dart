@@ -64,6 +64,110 @@ class LocalMovingPiece {
   }
 }
 
+class ActiveMoveStep {
+  final int pos;
+  final bool inHome;
+
+  const ActiveMoveStep({
+    required this.pos,
+    required this.inHome,
+  });
+
+  factory ActiveMoveStep.fromMap(Map<String, dynamic> map) {
+    return ActiveMoveStep(
+      pos: map['pos'] as int? ?? -1,
+      inHome: map['inHome'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'pos': pos,
+      'inHome': inHome,
+    };
+  }
+}
+
+class ActiveMove {
+  final String playerId;
+  final int pieceId;
+  final int startedAt;
+  final int stepDurationMs;
+  final List<ActiveMoveStep> steps;
+
+  const ActiveMove({
+    required this.playerId,
+    required this.pieceId,
+    required this.startedAt,
+    required this.stepDurationMs,
+    required this.steps,
+  });
+
+  int get totalDurationMs {
+    if (steps.length <= 1) return 0;
+    return (steps.length - 1) * stepDurationMs;
+  }
+
+  ActiveMoveStep stepAtElapsed(int elapsedMs) {
+    if (steps.isEmpty) {
+      return const ActiveMoveStep(pos: -1, inHome: false);
+    }
+
+    if (stepDurationMs <= 0) {
+      return steps.last;
+    }
+
+    if (elapsedMs <= 0) {
+      return steps.first;
+    }
+
+    final rawIndex = elapsedMs ~/ stepDurationMs;
+    final index = rawIndex.clamp(0, steps.length - 1).toInt();
+
+    return steps[index];
+  }
+
+  factory ActiveMove.fromMap(Map<String, dynamic> map) {
+    final rawSteps = map['steps'];
+
+    final parsedSteps = rawSteps is List
+        ? rawSteps
+        .map(
+          (s) => ActiveMoveStep.fromMap(
+        Map<String, dynamic>.from(s),
+      ),
+    )
+        .toList()
+        : <ActiveMoveStep>[];
+
+    return ActiveMove(
+      playerId: map['playerId'] as String? ?? '',
+      pieceId: map['pieceId'] as int? ?? 0,
+      startedAt: map['startedAt'] as int? ??
+          DateTime.now().millisecondsSinceEpoch,
+      stepDurationMs: map['stepDurationMs'] as int? ?? 250,
+      steps: parsedSteps.isNotEmpty
+          ? parsedSteps
+          : [
+        ActiveMoveStep(
+          pos: map['currentVisualPos'] as int? ?? -1,
+          inHome: map['inHome'] as bool? ?? false,
+        ),
+      ],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'playerId': playerId,
+      'pieceId': pieceId,
+      'startedAt': startedAt,
+      'stepDurationMs': stepDurationMs,
+      'steps': steps.map((s) => s.toMap()).toList(),
+    };
+  }
+}
+
 class LudoChat {
   final String sender;
   final String message;
@@ -83,11 +187,13 @@ class LudoChat {
     );
   }
 
-  Map<String, dynamic> toMap() => {
-    'sender': sender,
-    'message': message,
-    'timestamp': timestamp,
-  };
+  Map<String, dynamic> toMap() {
+    return {
+      'sender': sender,
+      'message': message,
+      'timestamp': timestamp,
+    };
+  }
 }
 
 class LudoGame {
@@ -102,6 +208,7 @@ class LudoGame {
   final bool isTestModeActive;
   final LudoChat activeChat;
   final Map<String, List<LudoPiece>> pieces;
+  final ActiveMove? activeMove;
 
   const LudoGame({
     required this.players,
@@ -115,14 +222,20 @@ class LudoGame {
     required this.isTestModeActive,
     required this.activeChat,
     required this.pieces,
+    required this.activeMove,
   });
 
   factory LudoGame.fromMap(Map<String, dynamic> map) {
-    var piecesMap = <String, List<LudoPiece>>{};
+    final piecesMap = <String, List<LudoPiece>>{};
+
     if (map['pieces'] != null) {
       (map['pieces'] as Map<String, dynamic>).forEach((uid, piecesList) {
         piecesMap[uid] = (piecesList as List)
-            .map((p) => LudoPiece.fromMap(p as Map<String, dynamic>))
+            .map(
+              (p) => LudoPiece.fromMap(
+            Map<String, dynamic>.from(p),
+          ),
+        )
             .toList();
       });
     }
@@ -137,13 +250,21 @@ class LudoGame {
       winnerUid: map['winnerUid'] as String? ?? '',
       boardId: map['boardId'] as String? ?? 'classic',
       isTestModeActive: map['isTestModeActive'] as bool? ?? false,
-      activeChat: LudoChat.fromMap(map['activeChat'] ?? {}),
+      activeChat: LudoChat.fromMap(
+        Map<String, dynamic>.from(map['activeChat'] ?? {}),
+      ),
       pieces: piecesMap,
+      activeMove: map['activeMove'] == null
+          ? null
+          : ActiveMove.fromMap(
+        Map<String, dynamic>.from(map['activeMove']),
+      ),
     );
   }
 
   Map<String, dynamic> toMap() {
-    var piecesMap = <String, dynamic>{};
+    final piecesMap = <String, dynamic>{};
+
     pieces.forEach((uid, pieceList) {
       piecesMap[uid] = pieceList.map((p) => p.toMap()).toList();
     });
@@ -160,6 +281,7 @@ class LudoGame {
       'isTestModeActive': isTestModeActive,
       'activeChat': activeChat.toMap(),
       'pieces': piecesMap,
+      'activeMove': activeMove?.toMap(),
     };
   }
 }

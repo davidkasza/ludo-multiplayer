@@ -136,49 +136,6 @@ class _LobbyState extends State<Lobby> {
                         title: "2. Start a new match:",
                         child: Column(
                           children: [
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 14),
-                              decoration: BoxDecoration(
-                                color: AppColors.yellowSafeBorder.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: AppColors.yellowSafeBorder.withOpacity(0.4)),
-                              ),
-                              child: CheckboxListTile(
-                                title: const Text("🛠️ Sandbox Mode (Cheats Enabled)", style: TextStyle(color: Color(0xffffe082), fontSize: 13, fontWeight: FontWeight.bold)),
-                                value: widget.isTestMode,
-                                activeColor: AppColors.blueBase,
-                                onChanged: (val) => widget.onTestModeChanged(val ?? false),
-                                controlAffinity: ListTileControlAffinity.leading,
-                                checkboxShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 6),
-                              ),
-                            ),
-
-                            Container(
-                              width: double.infinity,
-                              margin: const EdgeInsets.only(bottom: 12),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: AppColors.panelBackground,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: Colors.white.withOpacity(0.2)),
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: widget.selectedBoard,
-                                  dropdownColor: AppColors.panelBackground,
-                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
-                                  isExpanded: true,
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                                  items: const [
-                                    DropdownMenuItem(value: "classic", child: Text("Classic Map")),
-                                    DropdownMenuItem(value: "test", child: Text("Circular Loop")),
-                                  ],
-                                  onChanged: (val) => widget.onBoardChanged(val ?? "classic"),
-                                ),
-                              ),
-                            ),
-
                             ElevatedButton(
                               onPressed: widget.onCreateGame,
                               style: ElevatedButton.styleFrom(
