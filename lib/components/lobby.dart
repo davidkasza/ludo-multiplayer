@@ -143,7 +143,7 @@ class _LobbyState extends State<Lobby> {
                             fontSize: 15,
                           ),
                           decoration: InputDecoration(
-                            hintText: 'e.g., David',
+                            hintText: 'Enter your nickname',
                             hintStyle: const TextStyle(
                               color: Colors.grey,
                               fontWeight: FontWeight.normal,

@@ -16,7 +16,7 @@ class LudoApp extends StatefulWidget {
 class _LudoAppState extends State<LudoApp> {
   final LudoController _controller = LudoController();
 
-  String playerName = 'David';
+  String playerName = '';
   String selectedBoard = 'classic';
   bool isTestMode = false;
   int cheatDiceValue = 0;

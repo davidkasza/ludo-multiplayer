@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -9,7 +10,7 @@ import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
 import 'cyber_background.dart';
 
-class WaitingRoom extends StatelessWidget {
+class WaitingRoom extends StatefulWidget {
   final LudoController controller;
   final VoidCallback onQuit;
   final VoidCallback onStartGame;
@@ -22,15 +23,228 @@ class WaitingRoom extends StatelessWidget {
   });
 
   @override
+  State<WaitingRoom> createState() => _WaitingRoomState();
+}
+
+class _WaitingRoomState extends State<WaitingRoom> {
+  static const Duration _saveDebounce = Duration(milliseconds: 280);
+
+  Timer? _settingsSaveTimer;
+  String _draftRoomId = '';
+  int _draftMaxPlayers = 2;
+  Map<int, String> _draftSeatTypes = const {
+    0: LudoGame.humanSeat,
+    2: LudoGame.humanSeat,
+  };
+
+  int _draftRevision = 0;
+  bool _saveQueued = false;
+  bool _saveInFlight = false;
+  bool _awaitingRemoteAck = false;
+
+  LudoController get controller => widget.controller;
+
+  bool get _isSyncing =>
+      _saveQueued || _saveInFlight || _awaitingRemoteAck;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncDraftFromRemote(force: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant WaitingRoom oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncDraftFromRemote();
+  }
+
+  @override
+  void dispose() {
+    _settingsSaveTimer?.cancel();
+    super.dispose();
+  }
+
+  Map<int, String> _normalizeSeatTypes({
+    required int maxPlayers,
+    required Map<int, String> source,
+  }) {
+    final layout = LudoGame.seatLayoutForMaxPlayers(maxPlayers);
+    final result = <int, String>{};
+
+    for (int index = 0; index < layout.length; index++) {
+      final seat = layout[index];
+      result[seat] = index == 0
+          ? LudoGame.humanSeat
+          : LudoGame.normalizeSeatType(source[seat]);
+    }
+
+    return result;
+  }
+
+  bool _remoteMatchesDraft(LudoGame game) {
+    if (game.maxPlayers != _draftMaxPlayers) return false;
+
+    final layout = LudoGame.seatLayoutForMaxPlayers(_draftMaxPlayers);
+    for (final seat in layout) {
+      if (game.seatTypeForSeat(seat) !=
+          LudoGame.normalizeSeatType(_draftSeatTypes[seat])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  void _syncDraftFromRemote({bool force = false}) {
+    final game = controller.game;
+    if (game == null) return;
+
+    final roomChanged = _draftRoomId != controller.gameId;
+    if (roomChanged) {
+      _settingsSaveTimer?.cancel();
+      _saveQueued = false;
+      _saveInFlight = false;
+      _awaitingRemoteAck = false;
+      _draftRevision = 0;
+    }
+
+    if (_awaitingRemoteAck && _remoteMatchesDraft(game)) {
+      _awaitingRemoteAck = false;
+    }
+
+    if (!force &&
+        !roomChanged &&
+        (_saveQueued || _saveInFlight || _awaitingRemoteAck)) {
+      return;
+    }
+
+    _draftRoomId = controller.gameId;
+    _draftMaxPlayers = game.maxPlayers;
+    _draftSeatTypes = _normalizeSeatTypes(
+      maxPlayers: game.maxPlayers,
+      source: game.seatTypes,
+    );
+  }
+
+  void _changePlayerCount(int value) {
+    if (!controller.isHost || value == _draftMaxPlayers) return;
+
+    setState(() {
+      _draftMaxPlayers = value.clamp(2, 4).toInt();
+      _draftSeatTypes = _normalizeSeatTypes(
+        maxPlayers: _draftMaxPlayers,
+        source: _draftSeatTypes,
+      );
+      _draftRevision++;
+      _saveQueued = true;
+      _awaitingRemoteAck = false;
+    });
+
+    _scheduleSettingsSave();
+  }
+
+  void _changeSeatType(int seat, String seatType) {
+    if (!controller.isHost) return;
+
+    final normalized = LudoGame.normalizeSeatType(seatType);
+    if (_draftSeatTypes[seat] == normalized) return;
+
+    setState(() {
+      _draftSeatTypes = Map<int, String>.from(_draftSeatTypes)
+        ..[seat] = normalized;
+      _draftRevision++;
+      _saveQueued = true;
+      _awaitingRemoteAck = false;
+    });
+
+    _scheduleSettingsSave();
+  }
+
+  void _scheduleSettingsSave({
+    Duration delay = _saveDebounce,
+  }) {
+    _settingsSaveTimer?.cancel();
+    _settingsSaveTimer = Timer(
+      delay,
+          () => unawaited(_flushDraftSettings()),
+    );
+  }
+
+  Future<void> _flushDraftSettings() async {
+    if (!mounted || !_saveQueued) return;
+
+    if (_saveInFlight) {
+      _scheduleSettingsSave(delay: const Duration(milliseconds: 80));
+      return;
+    }
+
+    final game = controller.game;
+    if (game == null || game.status != 'waiting' || !controller.isHost) {
+      return;
+    }
+
+    final revision = _draftRevision;
+    final maxPlayers = _draftMaxPlayers;
+    final seatTypes = Map<int, String>.from(_draftSeatTypes);
+
+    setState(() {
+      _saveQueued = false;
+      _saveInFlight = true;
+    });
+
+    final saved = await controller.updateWaitingRoomSettings(
+      selectedBoard: game.boardId,
+      isTestMode: game.isTestModeActive,
+      maxPlayers: maxPlayers,
+      seatTypes: seatTypes,
+      isPublic: game.isPublic,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _saveInFlight = false;
+
+      if (!saved && revision == _draftRevision) {
+        _awaitingRemoteAck = false;
+        _saveQueued = false;
+        _draftMaxPlayers = game.maxPlayers;
+        _draftSeatTypes = _normalizeSeatTypes(
+          maxPlayers: game.maxPlayers,
+          source: game.seatTypes,
+        );
+      } else if (saved && revision == _draftRevision) {
+        final currentGame = controller.game;
+        _awaitingRemoteAck =
+            currentGame == null || !_remoteMatchesDraft(currentGame);
+      }
+    });
+
+    if (_saveQueued) {
+      _scheduleSettingsSave(delay: const Duration(milliseconds: 80));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final game = controller.game;
     if (game == null) return const SizedBox.shrink();
 
     final isHost = controller.isHost;
     final canStart = isHost && game.isReady;
-    final seatLayout = LudoGame.seatLayoutForMaxPlayers(game.maxPlayers);
+    final visibleMaxPlayers = isHost ? _draftMaxPlayers : game.maxPlayers;
+    final visibleSeatTypes = isHost
+        ? _draftSeatTypes
+        : _normalizeSeatTypes(
+      maxPlayers: game.maxPlayers,
+      source: game.seatTypes,
+    );
+    final seatLayout = LudoGame.seatLayoutForMaxPlayers(visibleMaxPlayers);
     final hasHumanOpponentSeat = seatLayout.skip(1).any(
-          (seat) => game.seatTypeForSeat(seat) == LudoGame.humanSeat,
+          (seat) =>
+      LudoGame.normalizeSeatType(visibleSeatTypes[seat]) ==
+          LudoGame.humanSeat,
     );
 
     return Scaffold(
@@ -45,7 +259,7 @@ class WaitingRoom extends StatelessWidget {
                 children: [
                   _CompactHeader(
                     isHost: isHost,
-                    onBack: onQuit,
+                    onBack: widget.onQuit,
                     onSettings: () => _showGameSettings(
                       context: context,
                       game: game,
@@ -65,23 +279,12 @@ class WaitingRoom extends StatelessWidget {
                             controller: controller,
                             game: game,
                             isHost: isHost,
+                            maxPlayers: visibleMaxPlayers,
+                            seatTypes: visibleSeatTypes,
                             seatLayout: seatLayout,
-                            onPlayerCountChanged: (value) {
-                              _updateSettings(
-                                game: game,
-                                maxPlayers: value,
-                              );
-                            },
-                            onSeatTypeChanged: (seat, seatType) {
-                              final updatedSeatTypes =
-                              Map<int, String>.from(game.seatTypes);
-                              updatedSeatTypes[seat] = seatType;
-
-                              _updateSettings(
-                                game: game,
-                                seatTypes: updatedSeatTypes,
-                              );
-                            },
+                            isSyncing: isHost && _isSyncing,
+                            onPlayerCountChanged: _changePlayerCount,
+                            onSeatTypeChanged: _changeSeatType,
                           ),
                           const SizedBox(height: 10),
                           _ColourAndSettingsRow(
@@ -115,7 +318,7 @@ class WaitingRoom extends StatelessWidget {
                     isHost: isHost,
                     canStart: canStart,
                     openHumanSeats: game.openHumanSeats,
-                    onStart: onStartGame,
+                    onStart: widget.onStartGame,
                   ),
                 ],
               ),
@@ -134,13 +337,13 @@ class WaitingRoom extends StatelessWidget {
     Map<int, String>? seatTypes,
     bool? isPublic,
   }) {
-    controller.updateWaitingRoomSettings(
+    unawaited(controller.updateWaitingRoomSettings(
       selectedBoard: selectedBoard ?? game.boardId,
       isTestMode: isTestMode ?? game.isTestModeActive,
-      maxPlayers: maxPlayers ?? game.maxPlayers,
-      seatTypes: seatTypes ?? game.seatTypes,
+      maxPlayers: maxPlayers ?? _draftMaxPlayers,
+      seatTypes: seatTypes ?? _draftSeatTypes,
       isPublic: isPublic ?? game.isPublic,
-    );
+    ));
   }
 
   Future<void> _showColourPicker({
@@ -496,7 +699,10 @@ class _PlayerSlotsPanel extends StatelessWidget {
   final LudoController controller;
   final LudoGame game;
   final bool isHost;
+  final int maxPlayers;
+  final Map<int, String> seatTypes;
   final List<int> seatLayout;
+  final bool isSyncing;
   final ValueChanged<int> onPlayerCountChanged;
   final void Function(int seat, String seatType) onSeatTypeChanged;
 
@@ -504,10 +710,26 @@ class _PlayerSlotsPanel extends StatelessWidget {
     required this.controller,
     required this.game,
     required this.isHost,
+    required this.maxPlayers,
+    required this.seatTypes,
     required this.seatLayout,
+    required this.isSyncing,
     required this.onPlayerCountChanged,
     required this.onSeatTypeChanged,
   });
+
+  String? _previewPlayerIdForSeat(int physicalSeat) {
+    final playerId = game.playerIdForSeat(physicalSeat);
+    if (playerId == null) return null;
+
+    final seatType = LudoGame.normalizeSeatType(seatTypes[physicalSeat]);
+    if (seatType == LudoGame.humanSeat &&
+        controller.isBotPlayer(playerId)) {
+      return null;
+    }
+
+    return playerId;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -524,7 +746,7 @@ class _PlayerSlotsPanel extends StatelessWidget {
           Row(
             children: [
               Text(
-                'Player slots (${game.players.length}/${game.maxPlayers})',
+                'Player slots (${game.players.length}/$maxPlayers)',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,
@@ -532,8 +754,19 @@ class _PlayerSlotsPanel extends StatelessWidget {
                 ),
               ),
               const Spacer(),
+              if (isSyncing) ...[
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.blueBright,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               _PlayerCountSelector(
-                value: game.maxPlayers,
+                value: maxPlayers,
                 enabled: isHost,
                 onChanged: onPlayerCountChanged,
               ),
@@ -548,7 +781,12 @@ class _PlayerSlotsPanel extends StatelessWidget {
               game: game,
               slotIndex: slotIndex,
               physicalSeat: seatLayout[slotIndex],
-              playerId: game.playerIdForSeat(seatLayout[slotIndex]),
+              playerId: _previewPlayerIdForSeat(seatLayout[slotIndex]),
+              seatType: slotIndex == 0
+                  ? LudoGame.humanSeat
+                  : LudoGame.normalizeSeatType(
+                seatTypes[seatLayout[slotIndex]],
+              ),
               canConfigure: isHost,
               onSeatTypeChanged: (seatType) {
                 onSeatTypeChanged(seatLayout[slotIndex], seatType);
@@ -623,6 +861,7 @@ class _CompactPlayerSeat extends StatelessWidget {
   final int slotIndex;
   final int physicalSeat;
   final String? playerId;
+  final String seatType;
   final bool canConfigure;
   final ValueChanged<String> onSeatTypeChanged;
 
@@ -632,6 +871,7 @@ class _CompactPlayerSeat extends StatelessWidget {
     required this.slotIndex,
     required this.physicalSeat,
     required this.playerId,
+    required this.seatType,
     required this.canConfigure,
     required this.onSeatTypeChanged,
   });
@@ -643,9 +883,6 @@ class _CompactPlayerSeat extends StatelessWidget {
     final isHostSeat = slotIndex == 0;
     final isPlayerHost = occupied && resolvedPlayerId == game.hostUid;
     final isBot = occupied && controller.isBotPlayer(resolvedPlayerId);
-    final seatType = isHostSeat
-        ? LudoGame.humanSeat
-        : game.seatTypeForSeat(physicalSeat);
     final occupiedByRealPlayer = occupied && !isBot;
     final canChangeType =
         canConfigure && !isHostSeat && !occupiedByRealPlayer;

@@ -720,15 +720,15 @@ mixin LudoRoomMixin on ChangeNotifier {
     }
   }
 
-  Future<void> updateWaitingRoomSettings({
+  Future<bool> updateWaitingRoomSettings({
     required String selectedBoard,
     required bool isTestMode,
     required int maxPlayers,
     required Map<int, String> seatTypes,
     required bool isPublic,
   }) async {
-    if (gameId.isEmpty || game == null || !isHost) return;
-    if (game!.status != 'waiting') return;
+    if (gameId.isEmpty || game == null || !isHost) return false;
+    if (game!.status != 'waiting') return false;
 
     final safeMaxPlayers = maxPlayers.clamp(2, 4).toInt();
     final newLayout = LudoGame.seatLayoutForMaxPlayers(safeMaxPlayers);
@@ -880,9 +880,11 @@ mixin LudoRoomMixin on ChangeNotifier {
 
       statusMessage = '';
       notifyListeners();
+      return true;
     } catch (error) {
       statusMessage = error.toString().replaceFirst('Exception: ', '');
       notifyListeners();
+      return false;
     }
   }
 
