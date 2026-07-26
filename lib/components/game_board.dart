@@ -3,8 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../controllers/ludo_controller.dart';
+import '../game/classic_board.dart';
 import '../game/ludo_board_mapper.dart';
-import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
 import 'painters/board_painters.dart';
 
@@ -56,7 +56,9 @@ class GameBoard extends StatelessWidget {
                       child: RepaintBoundary(
                         child: CustomPaint(
                           size: Size.square(boardSize),
-                          painter: const StaticBoardPainter(),
+                          painter: StaticBoardPainter(
+                            seatColorIds: controller.seatColorIds,
+                          ),
                         ),
                       ),
                     ),
@@ -75,11 +77,15 @@ class GameBoard extends StatelessWidget {
                                 currentUserId: controller.user?.uid,
                                 myPlayerIndex: controller.myPlayerIndex,
                                 isMyTurn: controller.isMyTurn,
-                                localMovingPiece: controller.localMovingPiece,
-                                hopFrame: controller.hopFrameNotifier.value,
-                                visualActiveMove: controller.visualActiveMove,
+                                localMovingPiece:
+                                controller.localMovingPiece,
+                                hopFrame:
+                                controller.hopFrameNotifier.value,
+                                visualActiveMove:
+                                controller.visualActiveMove,
                                 visualMoveElapsedMs:
                                 controller.visualMoveElapsedMs,
+                                seatColorIds: controller.seatColorIds,
                               ),
                             );
                           },
@@ -97,22 +103,25 @@ class GameBoard extends StatelessWidget {
   }
 
   void _handleTap(TapDownDetails details, double boardSize) {
-    if (controller.game == null || !controller.isMyTurn) return;
-    if (controller.game?.hasRolled != true) return;
-    if (controller.game?.activeMove != null) return;
+    final game = controller.game;
+
+    if (game == null || !controller.isMyTurn) return;
+    if (!game.hasRolled) return;
+    if (game.activeMove != null) return;
     if (controller.visualActiveMove != null) return;
     if (controller.localMovingPiece != null) return;
+    if (controller.myPlayerIndex < 0) return;
 
     final scale = LudoBoardMapper.baseResolution / boardSize;
     final canvasX = details.localPosition.dx * scale;
     final canvasY = details.localPosition.dy * scale;
 
-    final pieces = controller.getMyPieces();
+    for (final piece in controller.getMyPieces()) {
+      if (!_isValidMove(piece.pos, piece.inHome, game.diceValue)) continue;
 
-    for (final p in pieces) {
       final coords = LudoBoardMapper.getPieceCanvasCoords(
-        piece: p,
-        isPlayerOne: controller.myPlayerIndex == 0,
+        piece: piece,
+        playerIndex: controller.myPlayerIndex,
         isCurrentPlayer: true,
         isMyTurn: controller.isMyTurn,
         localMovingPiece: null,
@@ -120,29 +129,42 @@ class GameBoard extends StatelessWidget {
 
       if (coords == null) continue;
 
-      double cx = ((coords.dx - 20) / 50).roundToDouble() *
-          LudoBoardMapper.cellSize +
-          LudoBoardMapper.cellSize / 2;
+      double centerX;
+      double centerY;
 
-      double cy = ((coords.dy - 20) / 50).roundToDouble() *
-          LudoBoardMapper.cellSize +
-          LudoBoardMapper.cellSize / 2;
+      if (piece.inHome && piece.pos == 5) {
+        final goal = LudoBoardMapper.goalBoardCenter(
+          controller.myPlayerIndex,
+        );
+        centerX = goal.dx;
+        centerY = goal.dy;
+      } else {
+        centerX = ((coords.dx - ClassicBoard.offset) / ClassicBoard.step)
+            .roundToDouble() *
+            LudoBoardMapper.cellSize +
+            LudoBoardMapper.cellSize / 2;
 
-      if (p.inHome && p.pos == 5) {
-        cx = LudoBoardMapper.baseResolution / 2;
-        cy = controller.myPlayerIndex == 0
-            ? LudoBoardMapper.cellSize * 6.5
-            : LudoBoardMapper.cellSize * 8.5;
+        centerY = ((coords.dy - ClassicBoard.offset) / ClassicBoard.step)
+            .roundToDouble() *
+            LudoBoardMapper.cellSize +
+            LudoBoardMapper.cellSize / 2;
       }
 
       final distance = sqrt(
-        pow(canvasX - cx, 2) + pow(canvasY - cy, 2),
+        pow(canvasX - centerX, 2) + pow(canvasY - centerY, 2),
       );
 
       if (distance <= LudoBoardMapper.cellSize * 0.65) {
-        controller.movePiece(p.id);
+        controller.movePiece(piece.id);
         break;
       }
     }
+  }
+
+  bool _isValidMove(int position, bool inHome, int diceValue) {
+    if (inHome && position == 5) return false;
+    if (position == -1) return diceValue == 6;
+    if (inHome) return position + diceValue <= 5;
+    return true;
   }
 }

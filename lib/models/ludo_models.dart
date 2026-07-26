@@ -133,8 +133,8 @@ class ActiveMove {
     final parsedSteps = rawSteps is List
         ? rawSteps
         .map(
-          (s) => ActiveMoveStep.fromMap(
-        Map<String, dynamic>.from(s),
+          (step) => ActiveMoveStep.fromMap(
+        Map<String, dynamic>.from(step),
       ),
     )
         .toList()
@@ -163,7 +163,7 @@ class ActiveMove {
       'pieceId': pieceId,
       'startedAt': startedAt,
       'stepDurationMs': stepDurationMs,
-      'steps': steps.map((s) => s.toMap()).toList(),
+      'steps': steps.map((step) => step.toMap()).toList(),
     };
   }
 }
@@ -197,8 +197,19 @@ class LudoChat {
 }
 
 class LudoGame {
+  static const String humanOpponents = 'human';
+  static const String computerOpponents = 'computer';
+  static const String mixedOpponents = 'mixed';
+
+  static const String humanSeat = 'human';
+  static const String computerSeat = 'computer';
+
   final List<String> players;
   final Map<String, String> playerNames;
+  final Map<String, String> preferredColors;
+  final Map<String, int> playerSeats;
+  final Map<int, String> seatTypes;
+  final String hostUid;
   final String currentTurn;
   final int diceValue;
   final bool hasRolled;
@@ -206,6 +217,10 @@ class LudoGame {
   final String winnerUid;
   final String boardId;
   final bool isTestModeActive;
+  final int maxPlayers;
+  final String opponentType;
+  final bool isPublic;
+  final bool matchmakingOpen;
   final LudoChat activeChat;
   final Map<String, List<LudoPiece>> pieces;
   final ActiveMove? activeMove;
@@ -213,6 +228,10 @@ class LudoGame {
   const LudoGame({
     required this.players,
     required this.playerNames,
+    required this.preferredColors,
+    required this.playerSeats,
+    required this.seatTypes,
+    required this.hostUid,
     required this.currentTurn,
     required this.diceValue,
     required this.hasRolled,
@@ -220,36 +239,217 @@ class LudoGame {
     required this.winnerUid,
     required this.boardId,
     required this.isTestModeActive,
+    required this.maxPlayers,
+    required this.opponentType,
+    required this.isPublic,
+    required this.matchmakingOpen,
     required this.activeChat,
     required this.pieces,
     required this.activeMove,
   });
 
+  static List<int> seatLayoutForMaxPlayers(int maxPlayers) {
+    switch (maxPlayers.clamp(2, 4).toInt()) {
+      case 2:
+        return const [0, 2];
+      case 3:
+        return const [0, 1, 2];
+      case 4:
+        return const [0, 1, 2, 3];
+      default:
+        return const [0, 2];
+    }
+  }
+
+  static String normalizeSeatType(String? value) {
+    return value == computerSeat ? computerSeat : humanSeat;
+  }
+
+  static Map<int, String> parseSeatTypes(
+      Map<String, dynamic> map,
+      int maxPlayers,
+      ) {
+    final result = <int, String>{};
+    final rawSeatTypes = map['seatTypes'];
+
+    if (rawSeatTypes is Map) {
+      Map<String, dynamic>.from(rawSeatTypes).forEach((rawKey, rawValue) {
+        final seat = int.tryParse(rawKey);
+        if (seat == null || seat < 0 || seat > 3) return;
+        result[seat] = normalizeSeatType(rawValue?.toString());
+      });
+    }
+
+    final layout = seatLayoutForMaxPlayers(maxPlayers);
+    final legacyOpponentType =
+        map['opponentType'] as String? ?? humanOpponents;
+
+    for (int index = 0; index < layout.length; index++) {
+      final seat = layout[index];
+
+      if (index == 0) {
+        result[seat] = humanSeat;
+        continue;
+      }
+
+      result.putIfAbsent(
+        seat,
+            () => legacyOpponentType == computerOpponents
+            ? computerSeat
+            : humanSeat,
+      );
+    }
+
+    result.removeWhere((seat, _) => !layout.contains(seat));
+    return result;
+  }
+
+  static String deriveOpponentType({
+    required Map<int, String> seatTypes,
+    required int maxPlayers,
+  }) {
+    final opponentSeats = seatLayoutForMaxPlayers(maxPlayers).skip(1).toList();
+    if (opponentSeats.isEmpty) return humanOpponents;
+
+    final types = opponentSeats
+        .map((seat) => normalizeSeatType(seatTypes[seat]))
+        .toList();
+
+    if (types.every((type) => type == computerSeat)) {
+      return computerOpponents;
+    }
+
+    if (types.every((type) => type == humanSeat)) {
+      return humanOpponents;
+    }
+
+    return mixedOpponents;
+  }
+
+  String seatTypeForSeat(int physicalSeat) {
+    return normalizeSeatType(seatTypes[physicalSeat]);
+  }
+
+  String? playerIdForSeat(int physicalSeat) {
+    for (final entry in playerSeats.entries) {
+      if (entry.value == physicalSeat && players.contains(entry.key)) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  int get openSeats => (maxPlayers - players.length).clamp(0, 4).toInt();
+
+  int get openHumanSeats {
+    final occupiedSeats = playerSeats.entries
+        .where((entry) => players.contains(entry.key))
+        .map((entry) => entry.value)
+        .toSet();
+
+    int count = 0;
+    for (final seat in seatLayoutForMaxPlayers(maxPlayers)) {
+      if (seatTypeForSeat(seat) == humanSeat &&
+          !occupiedSeats.contains(seat)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  bool get isReady {
+    if (players.length != maxPlayers) return false;
+
+    for (final seat in seatLayoutForMaxPlayers(maxPlayers)) {
+      if (playerIdForSeat(seat) == null) return false;
+    }
+
+    return true;
+  }
+
   factory LudoGame.fromMap(Map<String, dynamic> map) {
+    final players = List<String>.from(map['players'] ?? []);
     final piecesMap = <String, List<LudoPiece>>{};
 
-    if (map['pieces'] != null) {
-      (map['pieces'] as Map<String, dynamic>).forEach((uid, piecesList) {
-        piecesMap[uid] = (piecesList as List)
+    final rawPieces = map['pieces'];
+    if (rawPieces is Map) {
+      Map<String, dynamic>.from(rawPieces).forEach((uid, piecesList) {
+        if (piecesList is! List) return;
+
+        piecesMap[uid] = piecesList
             .map(
-              (p) => LudoPiece.fromMap(
-            Map<String, dynamic>.from(p),
+              (piece) => LudoPiece.fromMap(
+            Map<String, dynamic>.from(piece),
           ),
         )
             .toList();
       });
     }
 
-    return LudoGame(
-      players: List<String>.from(map['players'] ?? []),
-      playerNames: Map<String, String>.from(map['playerNames'] ?? {}),
+    final playerNames = <String, String>{};
+    final rawNames = map['playerNames'];
+    if (rawNames is Map) {
+      Map<String, dynamic>.from(rawNames).forEach((key, value) {
+        playerNames[key] = value.toString();
+      });
+    }
+
+    final preferredColors = <String, String>{};
+    final rawColors = map['preferredColors'];
+    if (rawColors is Map) {
+      Map<String, dynamic>.from(rawColors).forEach((key, value) {
+        preferredColors[key] = value.toString();
+      });
+    }
+
+    final maxPlayers = (map['maxPlayers'] as int? ?? 2).clamp(2, 4).toInt();
+    final layout = seatLayoutForMaxPlayers(maxPlayers);
+
+    final playerSeats = <String, int>{};
+    final rawSeats = map['playerSeats'];
+    if (rawSeats is Map) {
+      Map<String, dynamic>.from(rawSeats).forEach((key, value) {
+        if (value is num) {
+          playerSeats[key] = value.toInt().clamp(0, 3).toInt();
+        }
+      });
+    }
+
+    if (playerSeats.isEmpty) {
+      for (int index = 0;
+      index < players.length && index < layout.length;
+      index++) {
+        playerSeats[players[index]] = layout[index];
+      }
+    }
+
+    final seatTypes = parseSeatTypes(map, maxPlayers);
+    final derivedOpponentType = deriveOpponentType(
+      seatTypes: seatTypes,
+      maxPlayers: maxPlayers,
+    );
+    final status = map['status'] as String? ?? 'waiting';
+    final isPublic = map['isPublic'] as bool? ?? true;
+
+    final parsedGame = LudoGame(
+      players: players,
+      playerNames: playerNames,
+      preferredColors: preferredColors,
+      playerSeats: playerSeats,
+      seatTypes: seatTypes,
+      hostUid: map['hostUid'] as String? ??
+          (players.isNotEmpty ? players.first : ''),
       currentTurn: map['currentTurn'] as String? ?? '',
       diceValue: map['diceValue'] as int? ?? 0,
       hasRolled: map['hasRolled'] as bool? ?? false,
-      status: map['status'] as String? ?? 'waiting',
+      status: status,
       winnerUid: map['winnerUid'] as String? ?? '',
       boardId: map['boardId'] as String? ?? 'classic',
       isTestModeActive: map['isTestModeActive'] as bool? ?? false,
+      maxPlayers: maxPlayers,
+      opponentType: derivedOpponentType,
+      isPublic: isPublic,
+      matchmakingOpen: map['matchmakingOpen'] as bool? ?? false,
       activeChat: LudoChat.fromMap(
         Map<String, dynamic>.from(map['activeChat'] ?? {}),
       ),
@@ -260,18 +460,51 @@ class LudoGame {
         Map<String, dynamic>.from(map['activeMove']),
       ),
     );
+
+    return LudoGame(
+      players: parsedGame.players,
+      playerNames: parsedGame.playerNames,
+      preferredColors: parsedGame.preferredColors,
+      playerSeats: parsedGame.playerSeats,
+      seatTypes: parsedGame.seatTypes,
+      hostUid: parsedGame.hostUid,
+      currentTurn: parsedGame.currentTurn,
+      diceValue: parsedGame.diceValue,
+      hasRolled: parsedGame.hasRolled,
+      status: parsedGame.status,
+      winnerUid: parsedGame.winnerUid,
+      boardId: parsedGame.boardId,
+      isTestModeActive: parsedGame.isTestModeActive,
+      maxPlayers: parsedGame.maxPlayers,
+      opponentType: parsedGame.opponentType,
+      isPublic: parsedGame.isPublic,
+      matchmakingOpen: map['matchmakingOpen'] as bool? ??
+          (status == 'waiting' &&
+              isPublic &&
+              parsedGame.openHumanSeats > 0),
+      activeChat: parsedGame.activeChat,
+      pieces: parsedGame.pieces,
+      activeMove: parsedGame.activeMove,
+    );
   }
 
   Map<String, dynamic> toMap() {
     final piecesMap = <String, dynamic>{};
 
     pieces.forEach((uid, pieceList) {
-      piecesMap[uid] = pieceList.map((p) => p.toMap()).toList();
+      piecesMap[uid] = pieceList.map((piece) => piece.toMap()).toList();
     });
 
     return {
       'players': players,
       'playerNames': playerNames,
+      'preferredColors': preferredColors,
+      'playerSeats': playerSeats,
+      'seatTypes': {
+        for (final entry in seatTypes.entries)
+          entry.key.toString(): normalizeSeatType(entry.value),
+      },
+      'hostUid': hostUid,
       'currentTurn': currentTurn,
       'diceValue': diceValue,
       'hasRolled': hasRolled,
@@ -279,6 +512,13 @@ class LudoGame {
       'winnerUid': winnerUid,
       'boardId': boardId,
       'isTestModeActive': isTestModeActive,
+      'maxPlayers': maxPlayers,
+      'opponentType': deriveOpponentType(
+        seatTypes: seatTypes,
+        maxPlayers: maxPlayers,
+      ),
+      'isPublic': isPublic,
+      'matchmakingOpen': matchmakingOpen,
       'activeChat': activeChat.toMap(),
       'pieces': piecesMap,
       'activeMove': activeMove?.toMap(),

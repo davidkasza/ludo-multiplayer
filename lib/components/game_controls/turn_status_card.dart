@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/ludo_controller.dart';
-import '../../theme/app_colors.dart';
 import 'rolling_dice_ui.dart';
 
 class TurnStatusCard extends StatelessWidget {
@@ -19,21 +18,10 @@ class TurnStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
-
-    final currentTurnUid = c.game?.currentTurn ?? "";
-    final currentTurnIndex = c.getPlayerIndex(currentTurnUid);
-
-    final avatarBgColor =
-    currentTurnIndex == 0 ? AppColors.blueBase : AppColors.redBase;
-
-    final avatarIconColor =
-    currentTurnIndex == 0 ? AppColors.blueDark : AppColors.redDark;
-
-    final myBaseColor =
-    c.myPlayerIndex == 0 ? AppColors.blueBase : AppColors.redBase;
-
-    final myBrightColor =
-    c.myPlayerIndex == 0 ? AppColors.blueBright : AppColors.redBright;
+    final currentTurnId = c.game?.currentTurn ?? '';
+    final currentStyle = c.colorStyleForPlayer(currentTurnId);
+    final myStyle = c.colorStyleForPlayer(c.user?.uid ?? '');
+    final currentIsBot = c.isBotPlayer(currentTurnId);
 
     return AnimatedBuilder(
       animation: pulseAnimation,
@@ -45,11 +33,11 @@ class TurnStatusCard extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: c.isMyTurn
-                ? myBaseColor.withOpacity(0.08)
+                ? myStyle.base.withOpacity(0.08)
                 : Colors.white.withOpacity(0.03),
             border: Border.all(
               color: c.isMyTurn
-                  ? myBrightColor.withOpacity(0.5)
+                  ? myStyle.bright.withOpacity(0.5)
                   : Colors.white.withOpacity(0.1),
               width: c.isMyTurn ? 2.0 : 1.0,
             ),
@@ -57,7 +45,7 @@ class TurnStatusCard extends StatelessWidget {
             boxShadow: c.canRoll
                 ? [
               BoxShadow(
-                color: myBaseColor.withOpacity(
+                color: myStyle.base.withOpacity(
                   pulseAnimation.value * 0.3,
                 ),
                 blurRadius: 10,
@@ -77,10 +65,10 @@ class TurnStatusCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 16,
-                  backgroundColor: avatarBgColor,
+                  backgroundColor: currentStyle.base,
                   child: Icon(
-                    Icons.person,
-                    color: avatarIconColor,
+                    currentIsBot ? Icons.smart_toy : Icons.person,
+                    color: currentStyle.dark,
                     size: 20,
                   ),
                 ),
@@ -91,12 +79,10 @@ class TurnStatusCard extends StatelessWidget {
                     children: [
                       Text(
                         c.game?.status == 'waiting'
-                            ? "Waiting..."
+                            ? 'Waiting...'
                             : c.isMyTurn
-                            ? "YOUR TURN!"
-                            : c.getPlayerDisplayTitle(
-                          c.game?.currentTurn ?? "",
-                        ),
+                            ? 'YOUR TURN!'
+                            : c.getPlayerDisplayTitle(currentTurnId),
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w900,
@@ -107,9 +93,11 @@ class TurnStatusCard extends StatelessWidget {
                       Text(
                         c.isMyTurn
                             ? c.game?.hasRolled == true
-                            ? "Select a piece to move!"
-                            : "Tap to roll!"
-                            : "Waiting for opponent...",
+                            ? 'Select a piece to move!'
+                            : 'Tap to roll!'
+                            : currentIsBot
+                            ? 'The computer is thinking...'
+                            : 'Waiting for the other player...',
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 11,

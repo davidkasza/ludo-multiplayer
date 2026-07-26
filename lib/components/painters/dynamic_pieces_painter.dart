@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../game/classic_board.dart';
 import '../../game/ludo_board_mapper.dart';
+import '../../game/ludo_palette.dart';
 import '../../models/ludo_models.dart';
-import '../../theme/app_colors.dart';
 import 'drawable_piece.dart';
 import 'ludo_piece_painter.dart';
 import 'selectable_glow_painter.dart';
@@ -19,6 +19,7 @@ class DynamicPiecesPainter extends CustomPainter {
   final double hopFrame;
   final ActiveMove? visualActiveMove;
   final int visualMoveElapsedMs;
+  final List<String> seatColorIds;
 
   const DynamicPiecesPainter({
     required this.game,
@@ -29,6 +30,7 @@ class DynamicPiecesPainter extends CustomPainter {
     required this.hopFrame,
     required this.visualActiveMove,
     required this.visualMoveElapsedMs,
+    required this.seatColorIds,
   });
 
   @override
@@ -41,30 +43,24 @@ class DynamicPiecesPainter extends CustomPainter {
     canvas.save();
     canvas.scale(size.width / baseRes);
 
-    final List<DrawablePiece> drawables = [];
+    final drawables = <DrawablePiece>[];
 
     for (final playerId in game!.players) {
-      final piecesList = game!.pieces[playerId] ?? [];
-
-      int playerIndex = game!.players.indexOf(playerId);
-
-      if (playerIndex == -1) {
-        playerIndex = 0;
-      }
-
-      final bool isPlayerOne = playerIndex == 0;
-      final bool isCurrentPlayer = playerId == currentUserId;
-
-      final Color colorBright =
-      isPlayerOne ? AppColors.blueBright : AppColors.redBright;
-
-      final Color colorDark =
-      isPlayerOne ? AppColors.blueDark : AppColors.redDark;
+      final piecesList = game!.pieces[playerId] ?? const <LudoPiece>[];
+      final rawPlayerIndex =
+          game!.playerSeats[playerId] ?? game!.players.indexOf(playerId);
+      final playerIndex = rawPlayerIndex < 0
+          ? 0
+          : rawPlayerIndex.clamp(0, 3).toInt();
+      final isCurrentPlayer = playerId == currentUserId;
+      final colorId = seatColorIds.length > playerIndex
+          ? seatColorIds[playerIndex]
+          : LudoPalette.defaultForSeat(playerIndex);
+      final style = LudoPalette.style(colorId);
 
       for (final piece in piecesList) {
         final activeMove = visualActiveMove;
-
-        final bool isSharedMoving = activeMove != null &&
+        final isSharedMoving = activeMove != null &&
             activeMove.playerId == playerId &&
             activeMove.pieceId == piece.id;
 
@@ -72,7 +68,6 @@ class DynamicPiecesPainter extends CustomPainter {
 
         if (isSharedMoving) {
           final activeStep = activeMove.stepAtElapsed(visualMoveElapsedMs);
-
           displayPiece = piece.copyWith(
             pos: activeStep.pos,
             inHome: activeStep.inHome,
@@ -81,20 +76,23 @@ class DynamicPiecesPainter extends CustomPainter {
           displayPiece = piece;
         }
 
-        final Offset? coords = LudoBoardMapper.getPieceCanvasCoords(
+        final coords = LudoBoardMapper.getPieceCanvasCoords(
           piece: displayPiece,
-          isPlayerOne: isPlayerOne,
+          playerIndex: playerIndex,
           isCurrentPlayer: isCurrentPlayer,
           isMyTurn: isMyTurn,
+          // activeMove already contains the current visual step. Passing
+          // localMovingPiece here would overwrite it with the original position,
+          // so the piece would only bounce in place and jump at the end.
           localMovingPiece: null,
         );
 
         if (coords == null) continue;
 
-        final Offset center = _resolvePieceCenter(
+        final center = _resolvePieceCenter(
           coords: coords,
           piece: displayPiece,
-          isPlayerOne: isPlayerOne,
+          playerIndex: playerIndex,
         );
 
         drawables.add(
@@ -105,20 +103,18 @@ class DynamicPiecesPainter extends CustomPainter {
             isCurrentPlayer: isCurrentPlayer,
             isSharedMoving: isSharedMoving,
             center: center,
-            colorBright: colorBright,
-            colorDark: colorDark,
+            colorBright: style.bright,
+            colorDark: style.dark,
           ),
         );
       }
     }
 
-    final Map<String, List<DrawablePiece>> groupedPieces = {};
+    final groupedPieces = <String, List<DrawablePiece>>{};
 
     for (final drawable in drawables) {
-      final String key =
-          '${drawable.center.dx.round()}_${drawable.center.dy.round()}';
-
-      groupedPieces.putIfAbsent(key, () => []);
+      final key = '${drawable.center.dx.round()}_${drawable.center.dy.round()}';
+      groupedPieces.putIfAbsent(key, () => <DrawablePiece>[]);
       groupedPieces[key]!.add(drawable);
     }
 
@@ -129,31 +125,23 @@ class DynamicPiecesPainter extends CustomPainter {
         }
 
         final playerCompare = a.playerIndex.compareTo(b.playerIndex);
-
-        if (playerCompare != 0) {
-          return playerCompare;
-        }
+        if (playerCompare != 0) return playerCompare;
 
         return a.piece.id.compareTo(b.piece.id);
       });
 
       for (int index = 0; index < group.length; index++) {
         final drawable = group[index];
+        var center = drawable.center +
+            _getStackOffset(
+              index: index,
+              count: group.length,
+              cellSize: cellSize,
+            );
 
-        Offset center = drawable.center;
-
-        final Offset offset = _getStackOffset(
-          index: index,
-          count: group.length,
-          cellSize: cellSize,
-        );
-
-        center = center + offset;
-
-        final bool isStillMoving =
-            drawable.isSharedMoving &&
-                visualActiveMove != null &&
-                visualMoveElapsedMs < visualActiveMove!.totalDurationMs;
+        final isStillMoving = drawable.isSharedMoving &&
+            visualActiveMove != null &&
+            visualMoveElapsedMs < visualActiveMove!.totalDurationMs;
 
         if (isStillMoving) {
           center = Offset(
@@ -162,9 +150,9 @@ class DynamicPiecesPainter extends CustomPainter {
           );
         }
 
-        final bool isAtGoal = drawable.piece.inHome && drawable.piece.pos == 5;
+        final isAtGoal = drawable.piece.inHome && drawable.piece.pos == 5;
 
-        final bool isSelectable = drawable.isCurrentPlayer &&
+        final isSelectable = drawable.isCurrentPlayer &&
             isMyTurn &&
             game!.hasRolled &&
             game!.activeMove == null &&
@@ -190,7 +178,7 @@ class DynamicPiecesPainter extends CustomPainter {
           dark: drawable.colorDark,
           cellSize: cellSize,
           isAtGoal: isAtGoal,
-          scale: group.length > 1 ? 0.88 : 1.0,
+          scale: group.length > 1 ? 0.84 : 1.0,
         );
       }
     }
@@ -201,10 +189,9 @@ class DynamicPiecesPainter extends CustomPainter {
   Offset _resolvePieceCenter({
     required Offset coords,
     required LudoPiece piece,
-    required bool isPlayerOne,
+    required int playerIndex,
   }) {
     const double cellSize = LudoBoardMapper.cellSize;
-    const double baseRes = LudoBoardMapper.baseResolution;
 
     double cx = ((coords.dx - ClassicBoard.offset) / ClassicBoard.step)
         .roundToDouble() *
@@ -217,8 +204,9 @@ class DynamicPiecesPainter extends CustomPainter {
         cellSize / 2;
 
     if (piece.inHome && piece.pos == 5) {
-      cx = baseRes / 2;
-      cy = isPlayerOne ? cellSize * 6.5 : cellSize * 8.5;
+      final goal = LudoBoardMapper.goalBoardCenter(playerIndex);
+      cx = goal.dx;
+      cy = goal.dy;
     }
 
     return Offset(cx, cy);
@@ -229,18 +217,24 @@ class DynamicPiecesPainter extends CustomPainter {
     required int count,
     required double cellSize,
   }) {
-    if (count <= 1) {
-      return Offset.zero;
-    }
+    if (count <= 1) return Offset.zero;
 
-    final List<Offset> offsets = [
-      Offset(-cellSize * 0.13, -cellSize * 0.13),
-      Offset(cellSize * 0.13, -cellSize * 0.13),
-      Offset(-cellSize * 0.13, cellSize * 0.13),
-      Offset(cellSize * 0.13, cellSize * 0.13),
+    final offsets = <Offset>[
+      Offset(-cellSize * 0.14, -cellSize * 0.14),
+      Offset(cellSize * 0.14, -cellSize * 0.14),
+      Offset(-cellSize * 0.14, cellSize * 0.14),
+      Offset(cellSize * 0.14, cellSize * 0.14),
+      Offset.zero,
     ];
 
-    return offsets[index % offsets.length];
+    if (index < offsets.length) return offsets[index];
+
+    final ring = 1 + index ~/ offsets.length;
+    final angle = (index * 2 * pi) / count;
+    return Offset(
+      cos(angle) * cellSize * 0.12 * ring,
+      sin(angle) * cellSize * 0.12 * ring,
+    );
   }
 
   bool _isValidMove({
@@ -250,7 +244,6 @@ class DynamicPiecesPainter extends CustomPainter {
     if (piece.pos == 5 && piece.inHome) return false;
     if (piece.pos == -1) return diceValue == 6;
     if (piece.inHome) return piece.pos + diceValue <= 5;
-
     return true;
   }
 
@@ -263,6 +256,15 @@ class DynamicPiecesPainter extends CustomPainter {
         oldDelegate.localMovingPiece != localMovingPiece ||
         oldDelegate.hopFrame != hopFrame ||
         oldDelegate.visualActiveMove != visualActiveMove ||
-        oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs;
+        oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs ||
+        !_sameColors(oldDelegate.seatColorIds, seatColorIds);
+  }
+
+  bool _sameColors(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }

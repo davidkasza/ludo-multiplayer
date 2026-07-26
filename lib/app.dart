@@ -8,7 +8,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ludo Multiplayer',
+      title: 'Ludora: Match & Play',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(),
       home: const LudoApp(),

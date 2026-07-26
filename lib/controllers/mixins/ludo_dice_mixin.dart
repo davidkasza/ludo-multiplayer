@@ -1,8 +1,8 @@
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../models/ludo_models.dart';
 
@@ -11,9 +11,7 @@ mixin LudoDiceMixin on ChangeNotifier {
   Random get random;
 
   User? get user;
-
   String get gameId;
-
   LudoGame? get game;
 
   String get statusMessage;
@@ -24,62 +22,122 @@ mixin LudoDiceMixin on ChangeNotifier {
 
   bool get canRoll;
 
-  List<LudoPiece> getMyPieces();
+  List<LudoPiece> getPiecesForPlayer(String playerId);
+  String getNextPlayerId(String currentPlayerId);
+  String getPlayerDisplayTitle(String playerId);
+
+  Map<String, dynamic> _activeGameActivityFields() {
+    return {
+      'lastActivityAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().toUtc().add(const Duration(hours: 24)),
+      ),
+    };
+  }
 
   Future<void> rollDice(int cheatDiceValue) async {
-    if (!canRoll) return;
+    if (!canRoll || user == null) return;
 
-    isDiceRolling = true;
-    notifyListeners();
+    await rollDiceForPlayer(
+      user!.uid,
+      forcedValue: cheatDiceValue,
+      animateLocally: true,
+    );
+  }
 
-    final value = cheatDiceValue > 0 && game?.isTestModeActive == true
-        ? cheatDiceValue
+  Future<void> rollDiceForPlayer(
+      String playerId, {
+        int forcedValue = 0,
+        bool animateLocally = false,
+      }) async {
+    final currentGame = game;
+
+    if (gameId.isEmpty ||
+        currentGame == null ||
+        currentGame.status != 'playing' ||
+        currentGame.currentTurn != playerId ||
+        currentGame.hasRolled ||
+        currentGame.activeMove != null) {
+      return;
+    }
+
+    if (animateLocally) {
+      isDiceRolling = true;
+      notifyListeners();
+    }
+
+    final value = forcedValue > 0 && currentGame.isTestModeActive
+        ? forcedValue
         : random.nextInt(6) + 1;
 
-    await Future.delayed(const Duration(milliseconds: 600));
+    await Future.delayed(
+      Duration(milliseconds: animateLocally ? 600 : 500),
+    );
 
-    isDiceRolling = false;
+    if (animateLocally) {
+      isDiceRolling = false;
+    }
 
-    final myPieces = getMyPieces();
+    final latestGame = game;
+    if (latestGame == null ||
+        latestGame.currentTurn != playerId ||
+        latestGame.hasRolled ||
+        latestGame.status != 'playing') {
+      notifyListeners();
+      return;
+    }
 
-    final hasValidMove = myPieces.any((p) {
-      if (p.pos == 5 && p.inHome) return false;
-      if (p.pos == -1) return value == 6;
-      if (p.inHome) return (p.pos + value) <= 5;
-      return true;
-    });
+    final pieces = getPiecesForPlayer(playerId);
+    final hasValidMove = pieces.any(
+          (piece) => isValidMove(piece: piece, diceValue: value),
+    );
 
     if (!hasValidMove) {
       if (value == 6) {
         statusMessage =
-        "🎲 You rolled a 6, but you have no valid moves. Roll again!";
-        notifyListeners();
+        '🎲 ${getPlayerDisplayTitle(playerId)} rolled a 6, but has no valid move. Roll again!';
 
         await db.collection('games').doc(gameId).update({
           'diceValue': value,
           'hasRolled': false,
-          'currentTurn': user!.uid,
+          'currentTurn': playerId,
+          ..._activeGameActivityFields(),
         });
       } else {
-        final nextPlayer = game!.players.firstWhere(
-              (p) => p != user!.uid,
-          orElse: () => user!.uid,
-        );
+        final nextPlayer = getNextPlayerId(playerId);
 
-        statusMessage = "🎲 Rolled: $value. No available moves, turn skipped.";
-        notifyListeners();
+        statusMessage =
+        '🎲 ${getPlayerDisplayTitle(playerId)} rolled $value. No available move; turn skipped.';
 
         await db.collection('games').doc(gameId).update({
           'diceValue': value,
           'hasRolled': false,
           'currentTurn': nextPlayer,
+          ..._activeGameActivityFields(),
         });
       }
-    } else {
-      await db.collection('games').doc(gameId).update({
-        'diceValue': value,
-        'hasRolled': true,
-      });
+
+      notifyListeners();
+      return;
     }
+
+    statusMessage = '';
+    notifyListeners();
+
+    await db.collection('games').doc(gameId).update({
+      'diceValue': value,
+      'hasRolled': true,
+      ..._activeGameActivityFields(),
+    });
+  }
+
+  bool isValidMove({
+    required LudoPiece piece,
+    required int diceValue,
+  }) {
+    if (piece.pos == 5 && piece.inHome) return false;
+    if (piece.pos == -1) return diceValue == 6;
+    if (piece.inHome) return piece.pos + diceValue <= 5;
+    return true;
   }
 }

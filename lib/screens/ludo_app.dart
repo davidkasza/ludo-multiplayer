@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../controllers/ludo_controller.dart';
+import '../components/end_game.dart';
 import '../components/lobby.dart';
 import '../components/waiting_room.dart';
-import '../components/end_game.dart';
+import '../controllers/ludo_controller.dart';
 import 'game_screen.dart';
 
 class LudoApp extends StatefulWidget {
@@ -16,8 +16,8 @@ class LudoApp extends StatefulWidget {
 class _LudoAppState extends State<LudoApp> {
   final LudoController _controller = LudoController();
 
-  String playerName = "David";
-  String selectedBoard = "classic";
+  String playerName = 'David';
+  String selectedBoard = 'classic';
   bool isTestMode = false;
   int cheatDiceValue = 0;
   int lastChatTimestamp = 0;
@@ -38,12 +38,13 @@ class _LudoAppState extends State<LudoApp> {
 
       final senderName = _controller.getPlayerDisplayTitle(chat.sender);
       final screenWidth = MediaQuery.of(context).size.width;
-      final horizontalMargin = screenWidth > 500 ? (screenWidth - 500) / 2 : 20.0;
+      final horizontalMargin =
+      screenWidth > 500 ? (screenWidth - 500) / 2 : 20.0;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            "💬 $senderName: ${chat.message}",
+            '💬 $senderName: ${chat.message}',
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontWeight: FontWeight.bold,
@@ -82,16 +83,13 @@ class _LudoAppState extends State<LudoApp> {
         final game = _controller.game;
 
         if (game?.status == 'finished') {
+          final winnerId = game!.winnerUid;
           final iWon = _controller.user != null &&
-              game!.winnerUid == _controller.user!.uid;
-
-          final winnerColor =
-          _controller.getPlayerIndex(game!.winnerUid) == 0 ? "BLUE" : "RED";
+              winnerId == _controller.user!.uid;
 
           return EndGame(
             iWon: iWon,
-            winnerName: _controller.getPlayerDisplayTitle(game.winnerUid),
-            winnerColor: winnerColor,
+            winnerName: _controller.getPlayerDisplayTitle(winnerId),
             onQuit: _controller.quitToMenu,
           );
         }
@@ -99,23 +97,9 @@ class _LudoAppState extends State<LudoApp> {
         if (game != null && game.status == 'waiting') {
           return WaitingRoom(
             controller: _controller,
-            selectedBoard: game.boardId,
-            onBoardChanged: (val) {
-              setState(() => selectedBoard = val);
-              _controller.updateWaitingRoomSettings(
-                selectedBoard: val,
-                isTestMode: game.isTestModeActive,
-              );
+            onQuit: () {
+              _controller.leaveGame();
             },
-            isTestMode: game.isTestModeActive,
-            onTestModeChanged: (val) {
-              setState(() => isTestMode = val);
-              _controller.updateWaitingRoomSettings(
-                selectedBoard: game.boardId,
-                isTestMode: val,
-              );
-            },
-            onQuit: _controller.quitToMenu,
             onStartGame: _controller.startGame,
           );
         }
@@ -124,22 +108,41 @@ class _LudoAppState extends State<LudoApp> {
           return GameScreen(
             controller: _controller,
             cheatDiceValue: cheatDiceValue,
-            onCheatDiceChanged: (val) {
-              setState(() => cheatDiceValue = val);
+            onCheatDiceChanged: (value) {
+              setState(() => cheatDiceValue = value);
             },
           );
         }
 
         return Lobby(
           playerName: playerName,
-          onPlayerNameChanged: (val) => setState(() => playerName = val),
-          selectedBoard: selectedBoard,
-          onBoardChanged: (val) => setState(() => selectedBoard = val),
-          isTestMode: isTestMode,
-          onTestModeChanged: (val) => setState(() => isTestMode = val),
-          onCreateGame: () =>
-              _controller.createGame(playerName, selectedBoard, isTestMode),
-          onJoinGame: (code) => _controller.joinGame(playerName, code),
+          onPlayerNameChanged: (value) {
+            setState(() => playerName = value);
+          },
+          onCreateGame: () {
+            _controller.createGame(
+              playerName,
+              selectedBoard,
+              isTestMode,
+            );
+          },
+          onPlayComputer: () {
+            _controller.createSoloGame(
+              playerName,
+              selectedBoard,
+              isTestMode,
+            );
+          },
+          onQuickMatch: () {
+            _controller.randomJoinGame(
+              playerName,
+              selectedBoard,
+              isTestMode,
+            );
+          },
+          onJoinGame: (code) {
+            _controller.joinGame(playerName, code);
+          },
           statusMessage: _controller.statusMessage,
         );
       },

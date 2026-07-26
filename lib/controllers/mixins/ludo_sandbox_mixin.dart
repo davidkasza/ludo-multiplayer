@@ -45,6 +45,10 @@ mixin LudoSandboxMixin on ChangeNotifier {
 
     await db.collection('games').doc(gameId).update({
       'pieces.${user!.uid}': updatedPieces,
+      'lastActivityAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().toUtc().add(const Duration(hours: 24)),
+      ),
     });
   }
 }

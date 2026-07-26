@@ -18,6 +18,10 @@ mixin LudoChatMixin on ChangeNotifier {
         'message': msg,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       },
+      'lastActivityAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().toUtc().add(const Duration(hours: 24)),
+      ),
     });
   }
 }

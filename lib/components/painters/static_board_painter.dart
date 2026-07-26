@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../../game/classic_board.dart';
 import '../../game/ludo_board_mapper.dart';
+import '../../game/ludo_palette.dart';
 import '../../theme/app_colors.dart';
 
 class StaticBoardPainter extends CustomPainter {
-  const StaticBoardPainter();
+  final List<String> seatColorIds;
+
+  const StaticBoardPainter({
+    required this.seatColorIds,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -20,115 +25,71 @@ class StaticBoardPainter extends CustomPainter {
       Paint()..color = AppColors.background,
     );
 
+    final styles = List.generate(
+      4,
+          (index) => LudoPalette.style(
+        seatColorIds.length > index
+            ? seatColorIds[index]
+            : LudoPalette.defaultForSeat(index),
+      ),
+    );
+
+    const baseOrigins = [
+      BoardPoint(0, 0),
+      BoardPoint(0, 9),
+      BoardPoint(9, 9),
+      BoardPoint(9, 0),
+    ];
+
     final double basePxSize = cellSize * 6;
-    final Paint paint = Paint()..style = PaintingStyle.fill;
+    final outlinedCells = <BoardPoint>[];
 
-    // BLUE BASE
-    paint.color = AppColors.blueBase;
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, basePxSize, basePxSize),
-      paint,
-    );
+    for (int seat = 0; seat < 4; seat++) {
+      final origin = baseOrigins[seat];
+      final style = styles[seat];
+      final left = origin.x * cellSize;
+      final top = origin.y * cellSize;
 
-    paint.color = Colors.white;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          basePxSize * 0.15,
-          basePxSize * 0.15,
-          basePxSize * 0.70,
-          basePxSize * 0.70,
+      canvas.drawRect(
+        Rect.fromLTWH(left, top, basePxSize, basePxSize),
+        Paint()..color = style.base,
+      );
+
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            left + basePxSize * 0.15,
+            top + basePxSize * 0.15,
+            basePxSize * 0.70,
+            basePxSize * 0.70,
+          ),
+          const Radius.circular(12),
         ),
-        const Radius.circular(12),
-      ),
-      paint,
-    );
-
-    // RED BASE
-    paint.color = AppColors.redBase;
-    final double redBaseX = cellSize * 9;
-
-    canvas.drawRect(
-      Rect.fromLTWH(redBaseX, redBaseX, basePxSize, basePxSize),
-      paint,
-    );
-
-    paint.color = Colors.white;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          redBaseX + basePxSize * 0.15,
-          redBaseX + basePxSize * 0.15,
-          basePxSize * 0.70,
-          basePxSize * 0.70,
-        ),
-        const Radius.circular(12),
-      ),
-      paint,
-    );
-
-    void drawBaseNest(BoardPoint bp, Color color) {
-      final double cx = bp.x * cellSize + cellSize / 2;
-      final double cy = bp.y * cellSize + cellSize / 2;
-
-      canvas.drawCircle(
-        Offset(cx, cy),
-        cellSize * 0.38,
         Paint()..color = Colors.white,
       );
 
-      canvas.drawCircle(
-        Offset(cx, cy),
-        cellSize * 0.38,
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3,
-      );
+      for (final basePoint in ClassicBoard.baseForSeat(seat)) {
+        _drawBaseNest(
+          canvas: canvas,
+          point: basePoint,
+          color: style.base,
+          cellSize: cellSize,
+        );
+      }
+
+      for (int homeIndex = 0; homeIndex < 5; homeIndex++) {
+        final homePoint = ClassicBoard.homeForSeat(seat)[homeIndex];
+        _fillCell(
+          canvas: canvas,
+          point: homePoint,
+          color: style.base,
+          cellSize: cellSize,
+        );
+        outlinedCells.add(homePoint);
+      }
     }
 
-    for (final bp in ClassicBoard.player1BaseGrid) {
-      drawBaseNest(bp, AppColors.blueBase);
-    }
-
-    for (final bp in ClassicBoard.player2BaseGrid) {
-      drawBaseNest(bp, AppColors.redBase);
-    }
-
-    void drawHomeTile(BoardPoint bp, Color color) {
-      canvas.drawRect(
-        Rect.fromLTWH(
-          bp.x * cellSize,
-          bp.y * cellSize,
-          cellSize,
-          cellSize,
-        ),
-        Paint()..color = color,
-      );
-
-      canvas.drawRect(
-        Rect.fromLTWH(
-          bp.x * cellSize,
-          bp.y * cellSize,
-          cellSize,
-          cellSize,
-        ),
-        Paint()
-          ..color = Colors.white.withOpacity(0.25)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
-      );
-    }
-
-    for (int i = 0; i < 5; i++) {
-      drawHomeTile(ClassicBoard.p1HomeGrid[i], AppColors.blueBase);
-    }
-
-    for (int i = 0; i < 5; i++) {
-      drawHomeTile(ClassicBoard.p2HomeGrid[i], AppColors.redBase);
-    }
-
-    const Set<int> safeTiles = {
+    const starSafeTiles = {
       3,
       8,
       16,
@@ -139,139 +100,287 @@ class StaticBoardPainter extends CustomPainter {
       47,
     };
 
-    for (int i = 0; i < ClassicBoard.gridPath.length; i++) {
-      final bp = ClassicBoard.gridPath[i];
+    final startSeatByPathIndex = <int, int>{
+      for (int seat = 0; seat < 4; seat++)
+        ClassicBoard.startOffsetForSeat(seat): seat,
+    };
 
-      final double tx = bp.x * cellSize;
-      final double ty = bp.y * cellSize;
+    for (int pathIndex = 0;
+    pathIndex < ClassicBoard.gridPath.length;
+    pathIndex++) {
+      final point = ClassicBoard.gridPath[pathIndex];
+      Color background = Colors.white;
 
-      Color bg = Colors.white;
-      Color border = Colors.black.withOpacity(0.15);
-
-      if (i == 0) {
-        bg = const Color(0xff29b6f6);
-        border = AppColors.blueBase;
-      } else if (i == 26) {
-        bg = AppColors.redBright;
-        border = AppColors.redBase;
-      } else if (safeTiles.contains(i)) {
-        bg = AppColors.yellowSafe;
-        border = AppColors.yellowSafeBorder;
+      final startSeat = startSeatByPathIndex[pathIndex];
+      if (startSeat != null) {
+        background = styles[startSeat].bright;
+      } else if (starSafeTiles.contains(pathIndex)) {
+        background = AppColors.yellowSafe;
       }
 
-      canvas.drawRect(
-        Rect.fromLTWH(tx, ty, cellSize, cellSize),
-        Paint()..color = bg,
+      _fillCell(
+        canvas: canvas,
+        point: point,
+        color: background,
+        cellSize: cellSize,
       );
-
-      canvas.drawRect(
-        Rect.fromLTWH(tx, ty, cellSize, cellSize),
-        Paint()
-          ..color = border
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
-      );
-
-      if (safeTiles.contains(i)) {
-        final textPainter = TextPainter(
-          text: const TextSpan(
-            text: "⭐",
-            style: TextStyle(fontSize: 14),
-          ),
-          textDirection: TextDirection.ltr,
-        );
-
-        textPainter
-          ..layout()
-          ..paint(
-            canvas,
-            Offset(
-              tx + cellSize / 2 - 7,
-              ty + cellSize / 2 - 9,
-            ),
-          );
-      }
+      outlinedCells.add(point);
     }
 
-    final double midStart = cellSize * 6;
-    final double midEnd = cellSize * 9;
-    const double centerPt = baseRes / 2;
-
-    final Path blueTriangle = Path()
-      ..moveTo(midStart, midStart)
-      ..lineTo(centerPt, centerPt)
-      ..lineTo(midEnd, midStart)
-      ..close();
-
-    canvas.drawPath(
-      blueTriangle,
-      Paint()..color = AppColors.blueBase,
+    _drawGoalTriangles(
+      canvas: canvas,
+      styles: styles,
+      cellSize: cellSize,
+      baseResolution: baseRes,
     );
 
-    canvas.drawPath(
-      blueTriangle,
-      Paint()
-        ..color = Colors.white.withOpacity(0.2)
-        ..style = PaintingStyle.stroke,
-    );
+    // Borders are drawn only after every cell has been filled. Previously the
+    // next cell's fill covered part of the preceding cell's border, which made
+    // lines disappear or look thicker on one side.
+    final gridPaint = Paint()
+      ..color = Colors.black.withOpacity(0.34)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = baseRes / size.width
+      ..isAntiAlias = false;
 
-    final Path redTriangle = Path()
-      ..moveTo(midStart, midEnd)
-      ..lineTo(centerPt, centerPt)
-      ..lineTo(midEnd, midEnd)
-      ..close();
-
-    canvas.drawPath(
-      redTriangle,
-      Paint()..color = AppColors.redBase,
-    );
-
-    canvas.drawPath(
-      redTriangle,
-      Paint()
-        ..color = Colors.white.withOpacity(0.2)
-        ..style = PaintingStyle.stroke,
-    );
-
-    final blueCrownPainter = TextPainter(
-      text: const TextSpan(
-        text: "👑",
-        style: TextStyle(fontSize: 18),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-
-    blueCrownPainter
-      ..layout()
-      ..paint(
-        canvas,
-        Offset(
-          centerPt - 9,
-          midStart + cellSize * 0.5 - 9,
+    for (final point in outlinedCells) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          point.x * cellSize,
+          point.y * cellSize,
+          cellSize,
+          cellSize,
         ),
+        gridPaint,
       );
+    }
 
-    final redCrownPainter = TextPainter(
-      text: const TextSpan(
-        text: "👑",
-        style: TextStyle(fontSize: 18),
-      ),
-      textDirection: TextDirection.ltr,
+    for (final pathIndex in starSafeTiles) {
+      _drawStar(
+        canvas: canvas,
+        point: ClassicBoard.gridPath[pathIndex],
+        cellSize: cellSize,
+      );
+    }
+
+    /*const startArrows = ['→', '↑', '←', '↓'];
+    for (int seat = 0; seat < 4; seat++) {
+      _drawStartArrow(
+        canvas: canvas,
+        point: ClassicBoard.gridPath[
+        ClassicBoard.startOffsetForSeat(seat)
+        ],
+        arrow: startArrows[seat],
+        cellSize: cellSize,
+      );
+    }*/
+
+    _drawGoalCrowns(
+      canvas: canvas,
+      cellSize: cellSize,
+      baseResolution: baseRes,
     );
-
-    redCrownPainter
-      ..layout()
-      ..paint(
-        canvas,
-        Offset(
-          centerPt - 9,
-          midEnd - cellSize * 0.5 - 9,
-        ),
-      );
 
     canvas.restore();
   }
 
+  void _fillCell({
+    required Canvas canvas,
+    required BoardPoint point,
+    required Color color,
+    required double cellSize,
+  }) {
+    canvas.drawRect(
+      Rect.fromLTWH(
+        point.x * cellSize,
+        point.y * cellSize,
+        cellSize,
+        cellSize,
+      ),
+      Paint()..color = color,
+    );
+  }
+
+  void _drawBaseNest({
+    required Canvas canvas,
+    required BoardPoint point,
+    required Color color,
+    required double cellSize,
+  }) {
+    final center = Offset(
+      point.x * cellSize + cellSize / 2,
+      point.y * cellSize + cellSize / 2,
+    );
+
+    canvas.drawCircle(
+      center,
+      cellSize * 0.38,
+      Paint()..color = Colors.white,
+    );
+
+    canvas.drawCircle(
+      center,
+      cellSize * 0.38,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+  }
+
+  void _drawStar({
+    required Canvas canvas,
+    required BoardPoint point,
+    required double cellSize,
+  }) {
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: '⭐',
+        style: TextStyle(fontSize: 14),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final left = point.x * cellSize;
+    final top = point.y * cellSize;
+
+    textPainter.paint(
+      canvas,
+      Offset(
+        left + cellSize / 2 - textPainter.width / 2,
+        top + cellSize / 2 - textPainter.height / 2,
+      ),
+    );
+  }
+
+  void _drawStartArrow({
+    required Canvas canvas,
+    required BoardPoint point,
+    required String arrow,
+    required double cellSize,
+  }) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: arrow,
+        style: TextStyle(
+          fontSize: cellSize * 0.48,
+          fontWeight: FontWeight.w900,
+          color: Colors.white.withOpacity(0.92),
+          shadows: const [
+            Shadow(
+              color: Colors.black54,
+              blurRadius: 2,
+              offset: Offset(0, 1),
+            ),
+          ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final left = point.x * cellSize;
+    final top = point.y * cellSize;
+
+    textPainter.paint(
+      canvas,
+      Offset(
+        left + cellSize / 2 - textPainter.width / 2,
+        top + cellSize / 2 - textPainter.height / 2,
+      ),
+    );
+  }
+
+  void _drawGoalTriangles({
+    required Canvas canvas,
+    required List<LudoColorStyle> styles,
+    required double cellSize,
+    required double baseResolution,
+  }) {
+    final start = cellSize * 6;
+    final end = cellSize * 9;
+    final center = Offset(baseResolution / 2, baseResolution / 2);
+
+    // Path order follows the physical seat order:
+    // top-left -> left, bottom-left -> bottom,
+    // bottom-right -> right, top-right -> top.
+    final paths = <Path>[
+      Path()
+        ..moveTo(start, start)
+        ..lineTo(center.dx, center.dy)
+        ..lineTo(start, end)
+        ..close(),
+      Path()
+        ..moveTo(start, end)
+        ..lineTo(center.dx, center.dy)
+        ..lineTo(end, end)
+        ..close(),
+      Path()
+        ..moveTo(end, start)
+        ..lineTo(center.dx, center.dy)
+        ..lineTo(end, end)
+        ..close(),
+      Path()
+        ..moveTo(start, start)
+        ..lineTo(center.dx, center.dy)
+        ..lineTo(end, start)
+        ..close(),
+    ];
+
+    for (int seat = 0; seat < 4; seat++) {
+      canvas.drawPath(
+        paths[seat],
+        Paint()..color = styles[seat].base,
+      );
+      canvas.drawPath(
+        paths[seat],
+        Paint()
+          ..color = Colors.black.withOpacity(0.34)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
+      );
+    }
+  }
+
+  void _drawGoalCrowns({
+    required Canvas canvas,
+    required double cellSize,
+    required double baseResolution,
+  }) {
+    final center = Offset(baseResolution / 2, baseResolution / 2);
+    final crownCenters = [
+      Offset(cellSize * 6.5, center.dy),
+      Offset(center.dx, cellSize * 8.5),
+      Offset(cellSize * 8.5, center.dy),
+      Offset(center.dx, cellSize * 6.5),
+    ];
+
+    for (final crownCenter in crownCenters) {
+      final crownPainter = TextPainter(
+        text: const TextSpan(
+          text: '👑',
+          style: TextStyle(fontSize: 17),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      crownPainter.paint(
+        canvas,
+        Offset(
+          crownCenter.dx - crownPainter.width / 2,
+          crownCenter.dy - crownPainter.height / 2,
+        ),
+      );
+    }
+  }
+
   @override
-  bool shouldRepaint(covariant StaticBoardPainter oldDelegate) => false;
+  bool shouldRepaint(covariant StaticBoardPainter oldDelegate) {
+    if (oldDelegate.seatColorIds.length != seatColorIds.length) return true;
+
+    for (int i = 0; i < seatColorIds.length; i++) {
+      if (oldDelegate.seatColorIds[i] != seatColorIds[i]) return true;
+    }
+
+    return false;
+  }
 }

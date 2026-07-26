@@ -1,16 +1,19 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
+import '../game/classic_board.dart';
+import '../game/ludo_palette.dart';
 import '../models/ludo_models.dart';
 import 'mixins/ludo_auth_mixin.dart';
-import 'mixins/ludo_room_mixin.dart';
+import 'mixins/ludo_bot_mixin.dart';
+import 'mixins/ludo_chat_mixin.dart';
 import 'mixins/ludo_dice_mixin.dart';
 import 'mixins/ludo_movement_mixin.dart';
-import 'mixins/ludo_chat_mixin.dart';
+import 'mixins/ludo_room_mixin.dart';
 import 'mixins/ludo_sandbox_mixin.dart';
 
 class LudoController extends ChangeNotifier
@@ -20,15 +23,16 @@ class LudoController extends ChangeNotifier
         LudoDiceMixin,
         LudoMovementMixin,
         LudoChatMixin,
-        LudoSandboxMixin {
+        LudoSandboxMixin,
+        LudoBotMixin {
   final FirebaseAuth auth = FirebaseAuth.instance;
   final FirebaseFirestore db = FirebaseFirestore.instance;
   final Random random = Random();
 
   User? user;
-  String gameId = "";
+  String gameId = '';
   LudoGame? game;
-  String statusMessage = "";
+  String statusMessage = '';
 
   bool isDiceRolling = false;
 
@@ -36,7 +40,7 @@ class LudoController extends ChangeNotifier
 
   LocalMovingPiece? localMovingPiece;
   Timer? hopTimer;
-  StreamSubscription<DocumentSnapshot>? gameSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? gameSubscription;
 
   ActiveMove? visualActiveMove;
   String? _visualActiveMoveKey;
@@ -44,16 +48,18 @@ class LudoController extends ChangeNotifier
   Timer? _visualActiveMoveClearTimer;
 
   final List<int> globalSafePlaces = const [
-    0,
     3,
     8,
+    11,
     16,
     21,
-    26,
+    24,
     29,
     34,
+    37,
     42,
     47,
+    50,
   ];
 
   LudoController() {
@@ -125,17 +131,20 @@ class LudoController extends ChangeNotifier
     hopTimer?.cancel();
     gameSubscription?.cancel();
     _visualActiveMoveClearTimer?.cancel();
+    stopRoomHeartbeat();
+    cancelBotTurn();
     hopFrameNotifier.dispose();
     super.dispose();
   }
 
-  int getPlayerIndex(String uid) {
-    if (game == null) return 0;
-    return game!.players.indexOf(uid);
+  int getPlayerIndex(String playerId) {
+    if (game == null) return -1;
+    return game!.playerSeats[playerId] ?? game!.players.indexOf(playerId);
   }
 
   int get myPlayerIndex {
-    return user != null ? getPlayerIndex(user!.uid) : 0;
+    if (user == null) return -1;
+    return getPlayerIndex(user!.uid);
   }
 
   bool get isMyTurn {
@@ -153,21 +162,74 @@ class LudoController extends ChangeNotifier
   }
 
   bool get isHost {
-    if (game == null || user == null || game!.players.isEmpty) return false;
-    return game!.players.first == user!.uid;
+    if (game == null || user == null) return false;
+    return game!.hostUid == user!.uid;
   }
 
-  String getPlayerDisplayTitle(String uid) {
-    if (game?.playerNames.containsKey(uid) == true) {
-      return game!.playerNames[uid]!;
+  bool isBotPlayer(String playerId) {
+    return playerId.startsWith('bot_');
+  }
+
+  String getPlayerDisplayTitle(String playerId) {
+    if (game?.playerNames.containsKey(playerId) == true) {
+      return game!.playerNames[playerId]!;
     }
 
-    return getPlayerIndex(uid) == 0 ? "BLUE (P1)" : "RED (P2)";
+    if (isBotPlayer(playerId)) return 'Computer';
+
+    final orderIndex = game?.players.indexOf(playerId) ?? -1;
+    return orderIndex < 0 ? 'Player' : 'Player ${orderIndex + 1}';
+  }
+
+  List<LudoPiece> getPiecesForPlayer(String playerId) {
+    return game?.pieces[playerId] ?? const [];
   }
 
   List<LudoPiece> getMyPieces() {
-    if (game == null || user == null) return [];
-    return game!.pieces[user!.uid] ?? [];
+    if (user == null) return const [];
+    return getPiecesForPlayer(user!.uid);
+  }
+
+  String getNextPlayerId(String currentPlayerId) {
+    final players = game?.players ?? const <String>[];
+    if (players.isEmpty) return currentPlayerId;
+
+    final currentIndex = players.indexOf(currentPlayerId);
+    if (currentIndex < 0) return players.first;
+
+    return players[(currentIndex + 1) % players.length];
+  }
+
+  int getStartOffsetForIndex(int playerIndex) {
+    return ClassicBoard.startOffsetForSeat(playerIndex);
+  }
+
+  int getGlobalPathIndexForIndex(int playerIndex, int relativePos) {
+    return ClassicBoard.globalPathIndexForSeat(playerIndex, relativePos);
+  }
+
+  List<String> get seatColorIds {
+    return LudoPalette.buildSeatColorIds(
+      players: game?.players ?? const [],
+      preferredColors: game?.preferredColors ?? const {},
+      playerSeats: game?.playerSeats ?? const {},
+      viewerId: user?.uid,
+    );
+  }
+
+  LudoColorStyle colorStyleForSeat(int seatIndex) {
+    final colors = seatColorIds;
+    final safeIndex = seatIndex.clamp(0, 3).toInt();
+    return LudoPalette.style(colors[safeIndex]);
+  }
+
+  LudoColorStyle colorStyleForPlayer(String playerId) {
+    final index = getPlayerIndex(playerId);
+    return colorStyleForSeat(index < 0 ? 0 : index);
+  }
+
+  String getPlayerColorName(String playerId) {
+    return colorStyleForPlayer(playerId).label.toUpperCase();
   }
 
   List<Map<String, dynamic>> createDefaultPieces(int initialPos) {

@@ -13,6 +13,9 @@ class RoomCodeBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final myId = controller.user?.uid ?? '';
+    final myStyle = controller.colorStyleForPlayer(myId);
+
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -25,14 +28,10 @@ class RoomCodeBar extends StatelessWidget {
         children: [
           Flexible(
             child: Text(
-              controller.getPlayerDisplayTitle(
-                controller.user?.uid ?? '',
-              ),
+              controller.getPlayerDisplayTitle(myId),
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: controller.myPlayerIndex == 0
-                    ? const Color(0xff42a5f5)
-                    : const Color(0xffef5350),
+                color: myStyle.bright,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -49,9 +48,7 @@ class RoomCodeBar extends StatelessWidget {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text(
-                      '📋 Room code successfully copied!',
-                    ),
+                    content: Text('📋 Room code successfully copied!'),
                     duration: Duration(seconds: 2),
                     behavior: SnackBarBehavior.floating,
                   ),
@@ -77,7 +74,7 @@ class RoomCodeBar extends StatelessWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        "Room Code: ${controller.gameId}",
+                        'Room Code: ${controller.gameId}',
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontFamily: 'monospace',
@@ -86,10 +83,7 @@ class RoomCodeBar extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    const Text(
-                      "📋",
-                      style: TextStyle(fontSize: 12),
-                    ),
+                    const Text('📋', style: TextStyle(fontSize: 12)),
                   ],
                 ),
               ),

@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../models/ludo_models.dart';
 
@@ -10,9 +10,7 @@ mixin LudoMovementMixin on ChangeNotifier {
   FirebaseFirestore get db;
 
   User? get user;
-
   String get gameId;
-
   LudoGame? get game;
 
   String get statusMessage;
@@ -22,69 +20,93 @@ mixin LudoMovementMixin on ChangeNotifier {
   set localMovingPiece(LocalMovingPiece? value);
 
   bool get isMyTurn;
-
   int get myPlayerIndex;
 
   List<int> get globalSafePlaces;
 
   List<LudoPiece> getMyPieces();
-
-  int getPlayerIndex(String uid);
+  List<LudoPiece> getPiecesForPlayer(String playerId);
+  int getPlayerIndex(String playerId);
+  int getStartOffsetForIndex(int playerIndex);
+  int getGlobalPathIndexForIndex(int playerIndex, int relativePos);
+  String getNextPlayerId(String currentPlayerId);
+  String getPlayerDisplayTitle(String playerId);
 
   void syncVisualActiveMove(ActiveMove? remoteMove);
 
   Future<void> movePiece(int pieceId) async {
+    if (user == null || !isMyTurn) return;
+    await movePieceForPlayer(user!.uid, pieceId);
+  }
+
+  Future<void> movePieceForPlayer(String playerId, int pieceId) async {
+    final currentGame = game;
+
     if (gameId.isEmpty ||
-        user == null ||
-        game == null ||
-        !isMyTurn ||
-        !game!.hasRolled ||
+        currentGame == null ||
+        currentGame.status != 'playing' ||
+        currentGame.currentTurn != playerId ||
+        !currentGame.hasRolled ||
         localMovingPiece != null ||
-        game!.activeMove != null) {
+        currentGame.activeMove != null) {
       return;
     }
 
-    final pieces = getMyPieces();
-    final targetPiece = pieces.firstWhere((p) => p.id == pieceId);
-    final dice = game!.diceValue;
+    final pieces = getPiecesForPlayer(playerId);
+    LudoPiece? targetPiece;
 
-    if (targetPiece.pos == 5 && targetPiece.inHome) return;
+    for (final piece in pieces) {
+      if (piece.id == pieceId) {
+        targetPiece = piece;
+        break;
+      }
+    }
 
-    if (targetPiece.pos == -1 && dice != 6) {
-      statusMessage = "⚠️ You can only leave the base by rolling a 6!";
+    if (targetPiece == null) return;
+    final movingPiece = targetPiece;
+
+    final dice = currentGame.diceValue;
+
+    if (movingPiece.pos == 5 && movingPiece.inHome) return;
+
+    if (movingPiece.pos == -1 && dice != 6) {
+      statusMessage = '⚠️ A piece can only leave the base after rolling a 6.';
       notifyListeners();
       return;
     }
 
-    if (targetPiece.inHome && (targetPiece.pos + dice) > 5) {
-      statusMessage = "⚠️ Roll too high! You must enter the goal precisely.";
+    if (movingPiece.inHome && (movingPiece.pos + dice) > 5) {
+      statusMessage = '⚠️ The goal must be reached with an exact roll.';
       notifyListeners();
       return;
     }
 
-    statusMessage = "";
+    statusMessage = '';
 
     final steps = _buildMoveSteps(
-      piece: targetPiece,
+      piece: movingPiece,
       dice: dice,
     );
 
     const stepDurationMs = 250;
 
     final activeMove = ActiveMove(
-      playerId: user!.uid,
+      playerId: playerId,
       pieceId: pieceId,
       startedAt: DateTime.now().millisecondsSinceEpoch,
       stepDurationMs: stepDurationMs,
       steps: steps,
     );
 
-    localMovingPiece = LocalMovingPiece(
-      id: pieceId,
-      currentVisualPos: targetPiece.pos,
-      inHome: targetPiece.inHome,
-      stepCount: steps.length - 1,
-    );
+    final isLocalHumanMove = playerId == user?.uid;
+    if (isLocalHumanMove) {
+      localMovingPiece = LocalMovingPiece(
+        id: pieceId,
+        currentVisualPos: movingPiece.pos,
+        inHome: movingPiece.inHome,
+        stepCount: steps.length - 1,
+      );
+    }
 
     syncVisualActiveMove(activeMove);
     notifyListeners();
@@ -98,22 +120,29 @@ mixin LudoMovementMixin on ChangeNotifier {
         Duration(milliseconds: activeMove.totalDurationMs + 60),
       );
 
-      if (gameId.isEmpty || user == null || game == null) return;
+      if (gameId.isEmpty || game == null) return;
 
-      localMovingPiece = null;
-      notifyListeners();
+      if (isLocalHumanMove) {
+        localMovingPiece = null;
+        notifyListeners();
+      }
 
       final lastStep = steps.last;
 
       await _finalizeFirebaseMove(
-        pieceId,
-        lastStep.pos,
-        lastStep.inHome,
-        targetPiece,
+        playerId: playerId,
+        pieceId: pieceId,
+        finalPos: lastStep.pos,
+        finalInHome: lastStep.inHome,
+        targetPiece: movingPiece,
+        dice: dice,
       );
-    } catch (e) {
-      localMovingPiece = null;
-      statusMessage = "❌ Could not move piece!";
+    } catch (error) {
+      if (isLocalHumanMove) {
+        localMovingPiece = null;
+      }
+
+      statusMessage = '❌ Could not move the piece.';
       syncVisualActiveMove(null);
       notifyListeners();
 
@@ -168,107 +197,126 @@ mixin LudoMovementMixin on ChangeNotifier {
     return steps;
   }
 
-  Future<void> _finalizeFirebaseMove(
-      int pieceId,
-      int finalPos,
-      bool finalInHome,
-      LudoPiece targetPiece,
-      ) async {
-    final pieces = getMyPieces();
-    final dice = game!.diceValue;
+  Future<void> _finalizeFirebaseMove({
+    required String playerId,
+    required int pieceId,
+    required int finalPos,
+    required bool finalInHome,
+    required LudoPiece targetPiece,
+    required int dice,
+  }) async {
+    final currentGame = game;
+    if (currentGame == null) return;
 
-    final updatedPieces = pieces.map((p) {
-      if (p.id != pieceId) return p.toMap();
+    final pieces = getPiecesForPlayer(playerId);
 
-      return p.copyWith(
+    final updatedPieces = pieces.map((piece) {
+      if (piece.id != pieceId) return piece.toMap();
+
+      return piece
+          .copyWith(
         pos: finalPos,
         inHome: finalInHome,
-      ).toMap();
+      )
+          .toMap();
     }).toList();
 
     bool didCapture = false;
+    final allPieces = <String, dynamic>{};
 
-    final opponentUid = game!.players.firstWhere(
-          (p) => p != user!.uid,
-      orElse: () => '',
-    );
+    currentGame.pieces.forEach((uid, pieceList) {
+      allPieces[uid] = pieceList.map((piece) => piece.toMap()).toList();
+    });
 
-    final opponentPieces =
-    opponentUid.isNotEmpty ? game!.pieces[opponentUid] : null;
+    allPieces[playerId] = updatedPieces;
 
-    List<Map<String, dynamic>>? updatedOpponentPieces;
-
-    if (opponentPieces != null && !finalInHome) {
-      final myGlobalPos =
-      myPlayerIndex == 0 ? finalPos : (finalPos + 26) % 52;
+    if (!finalInHome) {
+      final playerIndex = getPlayerIndex(playerId);
+      final myGlobalPos = getGlobalPathIndexForIndex(
+        playerIndex,
+        finalPos,
+      );
 
       if (!globalSafePlaces.contains(myGlobalPos)) {
-        final opponentPlayerIndex = getPlayerIndex(opponentUid);
+        for (final opponentId in currentGame.players) {
+          if (opponentId == playerId) continue;
 
-        updatedOpponentPieces = opponentPieces.map((op) {
-          if (op.pos == -1 || op.inHome) return op.toMap();
+          final opponentIndex = getPlayerIndex(opponentId);
+          final opponentPieces = currentGame.pieces[opponentId] ?? const [];
 
-          final opGlobalPos =
-          opponentPlayerIndex == 0 ? op.pos : (op.pos + 26) % 52;
+          final updatedOpponentPieces = opponentPieces.map((opponentPiece) {
+            if (opponentPiece.pos == -1 || opponentPiece.inHome) {
+              return opponentPiece.toMap();
+            }
 
-          if (opGlobalPos == myGlobalPos) {
-            didCapture = true;
-            return op.copyWith(pos: -1, inHome: false).toMap();
-          }
+            final opponentGlobalPos = getGlobalPathIndexForIndex(
+              opponentIndex,
+              opponentPiece.pos,
+            );
 
-          return op.toMap();
-        }).toList();
+            if (opponentGlobalPos == myGlobalPos) {
+              didCapture = true;
+              return opponentPiece
+                  .copyWith(
+                pos: -1,
+                inHome: false,
+              )
+                  .toMap();
+            }
+
+            return opponentPiece.toMap();
+          }).toList();
+
+          allPieces[opponentId] = updatedOpponentPieces;
+        }
       }
     }
 
     final isWinner = updatedPieces.every(
-          (p) => p['inHome'] == true && p['pos'] == 5,
+          (piece) => piece['inHome'] == true && piece['pos'] == 5,
     );
 
-    String nextPlayer = game!.players.firstWhere(
-          (p) => p != user!.uid,
-      orElse: () => user!.uid,
-    );
+    final didReachGoal = finalInHome &&
+        finalPos == 5 &&
+        !(targetPiece.inHome && targetPiece.pos == 5);
 
-    final didReachGoal =
-        finalInHome && finalPos == 5 && !(targetPiece.inHome && targetPiece.pos == 5);
+    String nextPlayer = getNextPlayerId(playerId);
 
     if (dice == 6 || didCapture || didReachGoal) {
-      nextPlayer = user!.uid;
+      nextPlayer = playerId;
 
       if (dice == 6) {
-        statusMessage = "✨ You rolled a 6! You get an extra roll as a reward!";
+        statusMessage =
+        '✨ ${getPlayerDisplayTitle(playerId)} rolled a 6 and plays again.';
       }
 
       if (didCapture) {
-        statusMessage = "💥 You captured an opponent! Extra roll awarded!";
+        statusMessage =
+        '💥 ${getPlayerDisplayTitle(playerId)} captured a piece and plays again.';
       }
 
       if (didReachGoal) {
         statusMessage =
-        "🎉 You reached the goal! You get an extra roll as a reward!";
+        '🎉 ${getPlayerDisplayTitle(playerId)} reached the goal and plays again.';
       }
     }
 
-    final finalAllPieces = <String, dynamic>{};
-
-    game!.pieces.forEach((uid, pieceList) {
-      finalAllPieces[uid] = pieceList.map((p) => p.toMap()).toList();
-    });
-
-    finalAllPieces[user!.uid] = updatedPieces;
-
-    if (opponentUid.isNotEmpty && updatedOpponentPieces != null) {
-      finalAllPieces[opponentUid] = updatedOpponentPieces;
-    }
+    final expiryDuration = isWinner
+        ? const Duration(hours: 1)
+        : const Duration(hours: 24);
 
     await db.collection('games').doc(gameId).update({
-      'pieces': finalAllPieces,
-      'currentTurn': isWinner ? user!.uid : nextPlayer,
+      'pieces': allPieces,
+      'currentTurn': isWinner ? playerId : nextPlayer,
       'hasRolled': false,
       'status': isWinner ? 'finished' : 'playing',
-      'winnerUid': isWinner ? user!.uid : '',
+      'winnerUid': isWinner ? playerId : '',
       'activeMove': null,
+      'matchmakingOpen': false,
+      'lastActivityAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().toUtc().add(expiryDuration),
+      ),
     });
   }
 }
