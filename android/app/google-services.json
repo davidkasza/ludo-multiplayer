@@ -59,6 +59,14 @@
           }
         },
         {
+          "client_id": "32046134053-ns6nb41v2l5v4eodjg25oe6ud9runeqr.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.davidkasza.ludo",
+            "certificate_hash": "90190044cc378714c8a8e53e0772958d95c69adb"
+          }
+        },
+        {
           "client_id": "32046134053-lvt1t072um8mtkhr78shnfqq3jkqh1kj.apps.googleusercontent.com",
           "client_type": 3
         }
