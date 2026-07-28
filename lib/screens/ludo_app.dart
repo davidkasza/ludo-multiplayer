@@ -28,20 +28,33 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   String lastSystemEventId = '';
   bool showProfile = false;
   bool _profileNameApplied = false;
+  Timer? _playerNameSaveTimer;
 
   @override
   void initState() {
     super.initState();
+
     WidgetsBinding.instance.addObserver(this);
     _controller.addListener(_gameListener);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _gameListener();
+      }
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_controller.reconnectCurrentGame());
-    } else if (state == AppLifecycleState.paused ||
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _playerNameSaveTimer?.cancel();
+      _playerNameSaveTimer = null;
+
+      unawaited(_persistPlayerName());
       unawaited(_controller.markPresenceOffline());
     }
   }
@@ -155,17 +168,40 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     );
   }
 
+  void _handlePlayerNameChanged(String value) {
+    setState(() => playerName = value);
+
+    _playerNameSaveTimer?.cancel();
+
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized.length > 15) return;
+
+    _playerNameSaveTimer = Timer(
+      const Duration(milliseconds: 700),
+          () {
+        unawaited(_controller.updateProfileName(normalized));
+      },
+    );
+  }
+
   Future<void> _persistPlayerName() async {
+    _playerNameSaveTimer?.cancel();
+    _playerNameSaveTimer = null;
+
     final normalized = playerName.trim();
-    if (normalized.isEmpty) return;
+    if (normalized.isEmpty || normalized.length > 15) return;
+
     await _controller.updateProfileName(normalized);
   }
 
   @override
   void dispose() {
+    _playerNameSaveTimer?.cancel();
+
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_gameListener);
     _controller.dispose();
+
     super.dispose();
   }
 
@@ -222,9 +258,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
 
         return Lobby(
           playerName: playerName,
-          onPlayerNameChanged: (value) {
-            setState(() => playerName = value);
-          },
+          onPlayerNameChanged: _handlePlayerNameChanged,
           onOpenProfile: () {
             setState(() => showProfile = true);
           },

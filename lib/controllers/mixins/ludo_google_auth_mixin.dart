@@ -337,13 +337,18 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
       );
     }
 
-    user = linkedUser;
-    await db.collection('users').doc(linkedUser.uid).set({
-      'isAnonymous': false,
-      'googleEmail': linkedUser.email ?? '',
-      'googleDisplayName': linkedUser.displayName ?? '',
-      'photoUrl': linkedUser.photoURL ?? '',
-      'authProviders': linkedUser.providerData
+    // Refresh providerData and the locally persisted Firebase user.
+    await linkedUser.reload();
+
+    final refreshedUser = auth.currentUser ?? linkedUser;
+    user = refreshedUser;
+
+    await db.collection('users').doc(refreshedUser.uid).set({
+      'isAnonymous': refreshedUser.isAnonymous,
+      'googleEmail': refreshedUser.email ?? '',
+      'googleDisplayName': refreshedUser.displayName ?? '',
+      'photoUrl': refreshedUser.photoURL ?? '',
+      'authProviders': refreshedUser.providerData
           .map((provider) => provider.providerId)
           .toSet()
           .toList(),
@@ -352,7 +357,17 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
     }, SetOptions(merge: true));
 
     await _reloadProfileAfterAuthChange();
+
     googleAuthMessage = 'Guest progress is now protected by Google.';
+
+    if (kDebugMode) {
+      print(
+        'Google account linked: '
+            'uid=${refreshedUser.uid}, '
+            'anonymous=${refreshedUser.isAnonymous}, '
+            'providers=${refreshedUser.providerData.map((p) => p.providerId).toList()}',
+      );
+    }
   }
 
   Future<void> _mergeAnonymousProfile({

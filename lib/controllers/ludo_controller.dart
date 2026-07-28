@@ -266,6 +266,7 @@ class LudoController extends ChangeNotifier
 
   @override
   void dispose() {
+    disposeAuth();
     hopTimer?.cancel();
     gameSubscription?.cancel();
     _visualActiveMoveClearTimer?.cancel();
