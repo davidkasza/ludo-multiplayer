@@ -9,19 +9,35 @@ mixin LudoAuthMixin on ChangeNotifier {
 
   Future<void> initAuth() async {
     try {
-      final existingUser = auth.currentUser;
+      // Wait until Firebase Auth has restored the saved local session.
+      User? restoredUser = await auth.authStateChanges().first;
 
-      if (existingUser != null) {
-        user = existingUser;
-      } else {
+      // Create an anonymous account only when there really is no saved user.
+      if (restoredUser == null) {
         final result = await auth.signInAnonymously();
-        user = result.user;
+        restoredUser = result.user;
+      }
+
+      user = restoredUser;
+
+      if (kDebugMode) {
+        final providers = user?.providerData
+            .map((provider) => provider.providerId)
+            .toList();
+
+        print(
+          'Auth initialized: '
+              'uid=${user?.uid}, '
+              'anonymous=${user?.isAnonymous}, '
+              'providers=$providers',
+        );
       }
 
       notifyListeners();
-    } catch (error) {
+    } catch (error, stackTrace) {
       if (kDebugMode) {
-        print('Auth error: $error');
+        print('Auth initialization error: $error');
+        print(stackTrace);
       }
     }
   }
