@@ -517,7 +517,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
                   ),
                   const SizedBox(height: 12),
                   _ToggleSetting(
-                    title: 'ðŸ› ï¸ Sandbox Mode',
+                    title: '\u{1F6E0}\uFE0F Sandbox Mode',
                     subtitle: isHost
                         ? 'Pieces start near the end for quick testing.'
                         : 'Only the host can change this setting.',
@@ -582,7 +582,7 @@ class _CompactHeader extends StatelessWidget {
             onPressed: onBack,
             icon: const Icon(Icons.arrow_back, color: Colors.white70),
           ),
-          const Text('ðŸŽ²', style: TextStyle(fontSize: 26)),
+          const Text('\u{1F3B2}', style: TextStyle(fontSize: 26)),
           const SizedBox(width: 8),
           const Expanded(
             child: Column(
@@ -680,7 +680,7 @@ class _RoomCodeStrip extends StatelessWidget {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('ðŸ“‹ Room code copied!'),
+                    content: Text('\u{1F4CB} Room code copied!'),
                     duration: Duration(seconds: 2),
                     behavior: SnackBarBehavior.floating,
                   ),
@@ -900,7 +900,7 @@ class _CompactPlayerSeat extends StatelessWidget {
         ? controller.presenceLabelForPlayer(resolvedPlayerId)
         : '';
     final subtitle = isPlayerHost
-        ? 'Host • $presenceLabel'
+        ? 'Host \u2022 $presenceLabel'
         : isBot
         ? 'AI opponent'
         : occupied
@@ -1243,7 +1243,7 @@ class _ColourAndSettingsRow extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '$boardLabel â€¢ $visibilityLabel',
+                          '$boardLabel \u2022 $visibilityLabel',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

@@ -1199,7 +1199,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       notifyListeners();
       return true;
     } catch (error) {
-      statusMessage = 'âŒ Could not reconnect to the match.';
+      statusMessage = '\u274C Could not reconnect to the match.';
       notifyListeners();
       return false;
     }
@@ -1228,7 +1228,7 @@ mixin LudoRoomMixin on ChangeNotifier {
     final currentId = gameId;
     final forfeited = await markMyselfForfeit();
     if (!forfeited) {
-      statusMessage = 'âŒ Could not forfeit the match.';
+      statusMessage = '\u274C Could not forfeit the match.';
       notifyListeners();
       return;
     }

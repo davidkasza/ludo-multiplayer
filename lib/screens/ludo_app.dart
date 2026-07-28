@@ -145,7 +145,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'ðŸ’¬ $senderName: ${chat.message}',
+          'Ã°Å¸â€™Â¬ $senderName: ${chat.message}',
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontWeight: FontWeight.bold,
@@ -201,7 +201,6 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_gameListener);
     _controller.dispose();
-
     super.dispose();
   }
 

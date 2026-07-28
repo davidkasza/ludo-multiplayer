@@ -168,7 +168,7 @@ mixin LudoMovementMixin on ChangeNotifier {
         localMovingPiece = null;
       }
 
-      statusMessage = 'âŒ Could not move the piece.';
+      statusMessage = '\u274C Could not move the piece.';
       syncVisualActiveMove(null);
       notifyListeners();
 
@@ -484,12 +484,12 @@ mixin LudoMovementMixin on ChangeNotifier {
 
     if (playerFinishedNow) {
       return matchFinished
-          ? 'ðŸ† $name finished in ${_ordinal(placement)} place. Match complete!'
-          : 'ðŸ $name finished in ${_ordinal(placement)} place!';
+          ? '\u{1F3C6} $name finished in ${_ordinal(placement)} place. Match complete!'
+          : '\u{1F3C1} $name finished in ${_ordinal(placement)} place!';
     }
-    if (didReachGoal) return 'ðŸŽ‰ $name reached the goal and plays again.';
-    if (didCapture) return 'ðŸ’¥ $name captured a piece and plays again.';
-    if (rolledSix) return 'âœ¨ $name rolled a 6 and plays again.';
+    if (didReachGoal) return '\u{1F389} $name reached the goal and plays again.';
+    if (didCapture) return '\u{1F4A5} $name captured a piece and plays again.';
+    if (rolledSix) return '\u2728 $name rolled a 6 and plays again.';
     return '';
   }
 

@@ -1045,7 +1045,7 @@ class _HistoryRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${_boardName(entry.boardId)} â€¢ ${entry.playerCount} players â€¢ ${_formatDuration(entry.duration)}',
+                  '${_boardName(entry.boardId)} \u2022 ${entry.playerCount} players \u2022 ${_formatDuration(entry.duration)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
