@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../components/cyber_background.dart';
 import '../components/game/game_header.dart';
+import '../components/game/player_presence_bar.dart';
 import '../components/game/quick_chat_bar.dart';
 import '../components/game/room_code_bar.dart';
 import '../components/game_board.dart';
@@ -39,7 +40,9 @@ class GameScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                   ],
                   RoomCodeBar(controller: controller),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
+                  PlayerPresenceBar(controller: controller),
+                  const SizedBox(height: 8),
                   QuickChatBar(onSendMessage: controller.sendQuickChat),
                   const SizedBox(height: 10),
                   Expanded(

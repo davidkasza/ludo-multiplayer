@@ -298,6 +298,54 @@ class GameSystemEvent {
   }
 }
 
+
+class PlayerPresence {
+  static const String online = 'online';
+  static const String reconnecting = 'reconnecting';
+  static const String offline = 'offline';
+  static const String ai = 'ai';
+  static const String forfeited = 'forfeited';
+
+  final String state;
+  final Timestamp? lastSeenAt;
+  final String sessionId;
+
+  const PlayerPresence({
+    required this.state,
+    required this.lastSeenAt,
+    required this.sessionId,
+  });
+
+  factory PlayerPresence.fromMap(Map<String, dynamic> map) {
+    final rawState = map['state'] as String? ?? offline;
+    final normalizedState = {
+      online,
+      reconnecting,
+      offline,
+      ai,
+      forfeited,
+    }.contains(rawState)
+        ? rawState
+        : offline;
+
+    return PlayerPresence(
+      state: normalizedState,
+      lastSeenAt: map['lastSeenAt'] is Timestamp
+          ? map['lastSeenAt'] as Timestamp
+          : null,
+      sessionId: map['sessionId'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'state': state,
+      'lastSeenAt': lastSeenAt,
+      'sessionId': sessionId,
+    };
+  }
+}
+
 class LudoGame {
   static const String humanOpponents = 'human';
   static const String computerOpponents = 'computer';
@@ -341,6 +389,7 @@ class LudoGame {
   final List<String> forfeitedPlayers;
   final AutomationLease? automationLease;
   final GameSystemEvent? systemEvent;
+  final Map<String, PlayerPresence> playerPresence;
 
   const LudoGame({
     required this.players,
@@ -375,6 +424,7 @@ class LudoGame {
     required this.forfeitedPlayers,
     required this.automationLease,
     required this.systemEvent,
+    required this.playerPresence,
   });
 
   static List<int> seatLayoutForMaxPlayers(int maxPlayers) {
@@ -619,6 +669,17 @@ class LudoGame {
       map['forfeitedPlayers'] ?? const <String>[],
     ).where(players.contains).toSet().toList();
 
+    final playerPresence = <String, PlayerPresence>{};
+    final rawPresence = map['playerPresence'];
+    if (rawPresence is Map) {
+      Map<String, dynamic>.from(rawPresence).forEach((playerId, value) {
+        if (value is! Map || !players.contains(playerId)) return;
+        playerPresence[playerId] = PlayerPresence.fromMap(
+          Map<String, dynamic>.from(value),
+        );
+      });
+    }
+
     return LudoGame(
       players: players,
       playerNames: playerNames,
@@ -683,6 +744,7 @@ class LudoGame {
           : GameSystemEvent.fromMap(
         Map<String, dynamic>.from(map['systemEvent']),
       ),
+      playerPresence: playerPresence,
     );
   }
 
@@ -732,6 +794,10 @@ class LudoGame {
       'forfeitedPlayers': forfeitedPlayers,
       'automationLease': automationLease?.toMap(),
       'systemEvent': systemEvent?.toMap(),
+      'playerPresence': {
+        for (final entry in playerPresence.entries)
+          entry.key: entry.value.toMap(),
+      },
     };
   }
 }

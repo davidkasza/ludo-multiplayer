@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../components/cyber_background.dart';
 import '../controllers/ludo_controller.dart';
+import '../controllers/mixins/ludo_google_auth_mixin.dart';
 import '../models/profile_models.dart';
 import '../theme/app_colors.dart';
 
@@ -29,6 +30,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final TextEditingController _nameController;
   late Future<List<MatchHistoryEntry>> _historyFuture;
   bool _savingName = false;
+  bool _authActionRunning = false;
 
   @override
   void initState() {
@@ -65,6 +67,152 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Profile name saved.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _connectGoogle() async {
+    if (_authActionRunning) return;
+    setState(() => _authActionRunning = true);
+
+    final result = await widget.controller.connectGoogleAccount();
+    if (!mounted) return;
+
+    if (result == GoogleAccountResult.conflict) {
+      setState(() => _authActionRunning = false);
+      await _showExistingGoogleAccountDialog();
+      return;
+    }
+
+    await _finishAuthAction(result);
+  }
+
+  Future<void> _showExistingGoogleAccountDialog() async {
+    final merge = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.panelBackground,
+          title: const Text(
+            'Existing Ludora account',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          content: Text(
+            "This Google account already has Ludora progress. Sign in to it and merge this guest profile's stored match history, XP and coins. The merge is recorded so it cannot be awarded twice.",
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.66),
+              height: 1.45,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.blueBase,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Merge & Sign In'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (merge != true || !mounted) return;
+
+    setState(() => _authActionRunning = true);
+    final result =
+    await widget.controller.mergeAndSignInWithExistingGoogle();
+    if (!mounted) return;
+    await _finishAuthAction(result);
+  }
+
+  Future<void> _signOut() async {
+    if (_authActionRunning) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.panelBackground,
+          title: const Text(
+            'Sign out?',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          content: Text(
+            'Your Google profile stays safe. This installation will start a new guest profile until you sign in again.',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.66),
+              height: 1.45,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Sign Out'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _authActionRunning = true);
+    final result = await widget.controller.signOutToNewGuest();
+    if (!mounted) return;
+    await _finishAuthAction(result);
+  }
+
+  Future<void> _finishAuthAction(GoogleAccountResult result) async {
+    if (!mounted) return;
+
+    final successful = result == GoogleAccountResult.linked ||
+        result == GoogleAccountResult.signedIn ||
+        result == GoogleAccountResult.signedOut;
+
+    if (successful) {
+      final refreshedName = widget.controller.profileName;
+      _nameController.text = refreshedName;
+      widget.onNameChanged(refreshedName);
+      setState(() {
+        _authActionRunning = false;
+        _reloadHistory();
+      });
+    } else {
+      setState(() => _authActionRunning = false);
+    }
+
+    if (result == GoogleAccountResult.cancelled) return;
+
+    final message = widget.controller.googleAuthMessage.isNotEmpty
+        ? widget.controller.googleAuthMessage
+        : successful
+        ? 'Account updated.'
+        : 'Google account action failed.';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -110,6 +258,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 widget.controller.user?.isAnonymous ?? true,
                                 isSaving: _savingName,
                                 onSave: _saveName,
+                              ),
+                              const SizedBox(height: 10),
+                              _AccountPanel(
+                                controller: widget.controller,
+                                busy: _authActionRunning ||
+                                    widget.controller.googleAuthBusy,
+                                onConnect: _connectGoogle,
+                                onSignOut: _signOut,
+                              ),
+                              const SizedBox(height: 10),
+                              _ProgressionPanel(
+                                controller: widget.controller,
                               ),
                               const SizedBox(height: 10),
                               _StatsPanel(stats: stats),
@@ -337,7 +497,7 @@ class _ProfileIdentityCard extends StatelessWidget {
                 border: Border.all(color: Colors.amber.withOpacity(0.26)),
               ),
               child: Text(
-                'Guest progress can be lost after clearing app data or changing devices. Google sign-in can later be linked to this anonymous account without discarding its history.',
+                'Guest progress can be lost after clearing app data or changing devices. Connect Google below to protect this UID and keep its history.',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.62),
                   fontSize: 10,
@@ -346,6 +506,273 @@ class _ProfileIdentityCard extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+
+class _AccountPanel extends StatelessWidget {
+  final LudoController controller;
+  final bool busy;
+  final VoidCallback onConnect;
+  final VoidCallback onSignOut;
+
+  const _AccountPanel({
+    required this.controller,
+    required this.busy,
+    required this.onConnect,
+    required this.onSignOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final linked = controller.isGoogleLinked;
+    final email = controller.googleEmail;
+
+    return _GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Account protection',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: linked
+                      ? AppColors.successGreen.withOpacity(0.12)
+                      : Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: linked
+                        ? AppColors.successGreen.withOpacity(0.35)
+                        : Colors.white.withOpacity(0.10),
+                  ),
+                ),
+                child: Icon(
+                  linked ? Icons.verified_user_rounded : Icons.shield_outlined,
+                  color: linked ? AppColors.successGreen : Colors.white54,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      linked ? 'Google connected' : 'Guest-only profile',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      linked
+                          ? (email.isEmpty
+                          ? 'Progress is available after Google sign-in.'
+                          : email)
+                          : 'Linking keeps the same Firebase UID, match history and active profile.',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.46),
+                        fontSize: 10,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: linked
+                ? OutlinedButton.icon(
+              onPressed: busy ? null : onSignOut,
+              icon: busy
+                  ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+                  : const Icon(Icons.logout_rounded),
+              label: const Text('Sign Out'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white70,
+                side: BorderSide(color: Colors.white.withOpacity(0.14)),
+                minimumSize: const Size.fromHeight(46),
+              ),
+            )
+                : ElevatedButton.icon(
+              onPressed: busy ? null : onConnect,
+              icon: busy
+                  ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+                  : const Icon(Icons.login_rounded),
+              label: const Text(
+                'Continue with Google',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xff1f2937),
+                minimumSize: const Size.fromHeight(46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressionPanel extends StatelessWidget {
+  final LudoController controller;
+
+  const _ProgressionPanel({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = controller.levelProgress;
+    final isMax = progress.isMaxLevel;
+
+    return _GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Progression',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.yellowBright.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: AppColors.yellowBright.withOpacity(0.30),
+                  ),
+                ),
+                child: Text(
+                  '${controller.profileCoins} COINS',
+                  style: const TextStyle(
+                    color: AppColors.yellowBright,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 13),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.blueBase.withOpacity(0.16),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppColors.blueBright.withOpacity(0.45),
+                    width: 2,
+                  ),
+                ),
+                child: Text(
+                  '${progress.level}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Level ${progress.level}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      isMax
+                          ? '${controller.profileXp} total XP • Maximum configured level'
+                          : '${progress.earnedWithinLevel}/${progress.requiredWithinLevel} XP to next level • ${controller.profileXp} total',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.45),
+                        fontSize: 10,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: isMax ? 1 : progress.fraction,
+                        minHeight: 8,
+                        backgroundColor: Colors.white.withOpacity(0.06),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppColors.blueBright,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 11),
+          Text(
+            'Rewards are calculated from one central configuration (v${controller.progressionConfig.version}). Sandbox rewards are ${controller.progressionConfig.sandboxRewardsEnabled ? 'enabled' : 'disabled'}.',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.34),
+              fontSize: 9,
+              height: 1.35,
+            ),
+          ),
         ],
       ),
     );
@@ -618,7 +1045,7 @@ class _HistoryRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${_boardName(entry.boardId)} • ${entry.playerCount} players • ${_formatDuration(entry.duration)}',
+                  '${_boardName(entry.boardId)} â€¢ ${entry.playerCount} players â€¢ ${_formatDuration(entry.duration)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

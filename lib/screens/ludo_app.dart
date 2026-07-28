@@ -40,6 +40,9 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_controller.reconnectCurrentGame());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_controller.markPresenceOffline());
     }
   }
 
@@ -129,7 +132,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '💬 $senderName: ${chat.message}',
+          'ðŸ’¬ $senderName: ${chat.message}',
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontWeight: FontWeight.bold,

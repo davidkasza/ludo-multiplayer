@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../models/ludo_models.dart';
 import '../../models/profile_models.dart';
+import '../../config/progression_config.dart';
 
 mixin LudoProfileMixin on ChangeNotifier {
   FirebaseFirestore get db;
@@ -24,6 +25,23 @@ mixin LudoProfileMixin on ChangeNotifier {
   bool get activeGameChecked;
   set activeGameChecked(bool value);
 
+  int get profileXp;
+  set profileXp(int value);
+
+  int get profileCoins;
+  set profileCoins(int value);
+
+  int get rewardedMatches;
+  set rewardedMatches(int value);
+
+  int get rewardedWins;
+  set rewardedWins(int value);
+
+  int get rewardedPodiums;
+  set rewardedPodiums(int value);
+
+  Future<ProgressionReward?> claimProgressionFromResult(String matchId);
+
   Future<void> loadMyProfile() async {
     final currentUser = user;
     if (currentUser == null) return;
@@ -36,6 +54,11 @@ mixin LudoProfileMixin on ChangeNotifier {
         final profile = PlayerProfile.fromMap(snapshot.id, snapshot.data()!);
         profileName = profile.displayName;
         activeGameId = profile.activeGameId;
+        profileXp = profile.xp;
+        profileCoins = profile.coins;
+        rewardedMatches = profile.rewardedMatches;
+        rewardedWins = profile.rewardedWins;
+        rewardedPodiums = profile.rewardedPodiums;
 
         await reference.set({
           'isAnonymous': currentUser.isAnonymous,
@@ -45,6 +68,11 @@ mixin LudoProfileMixin on ChangeNotifier {
         await reference.set({
           'displayName': '',
           'activeGameId': '',
+          'xp': 0,
+          'coins': 0,
+          'rewardedMatches': 0,
+          'rewardedWins': 0,
+          'rewardedPodiums': 0,
           'isAnonymous': currentUser.isAnonymous,
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
@@ -151,11 +179,19 @@ mixin LudoProfileMixin on ChangeNotifier {
     try {
       final snapshot = await db.collection('games').doc(roomId).get();
       if (!snapshot.exists || snapshot.data() == null) {
+        await claimProgressionFromResult(roomId);
         await clearMyActiveGame(expectedGameId: roomId);
         return;
       }
 
       final candidate = LudoGame.fromMap(snapshot.data()!);
+      if (candidate.status == 'finished' &&
+          candidate.players.contains(currentUser.uid)) {
+        await claimProgressionFromResult(roomId);
+        await clearMyActiveGame(expectedGameId: roomId);
+        return;
+      }
+
       final isValid = candidate.players.contains(currentUser.uid) &&
           (candidate.status == 'waiting' || candidate.status == 'playing');
 

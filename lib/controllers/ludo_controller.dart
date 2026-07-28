@@ -5,15 +5,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../config/progression_config.dart';
 import '../game/classic_board.dart';
 import '../game/ludo_palette.dart';
 import '../models/ludo_models.dart';
 import 'mixins/ludo_auth_mixin.dart';
+import 'mixins/ludo_google_auth_mixin.dart';
 import 'mixins/ludo_bot_mixin.dart';
 import 'mixins/ludo_chat_mixin.dart';
 import 'mixins/ludo_dice_mixin.dart';
 import 'mixins/ludo_movement_mixin.dart';
+import 'mixins/ludo_presence_mixin.dart';
 import 'mixins/ludo_profile_mixin.dart';
+import 'mixins/ludo_progression_mixin.dart';
 import 'mixins/ludo_room_mixin.dart';
 import 'mixins/ludo_sandbox_mixin.dart';
 
@@ -21,6 +25,9 @@ class LudoController extends ChangeNotifier
     with
         LudoAuthMixin,
         LudoProfileMixin,
+        LudoProgressionMixin,
+        LudoGoogleAuthMixin,
+        LudoPresenceMixin,
         LudoRoomMixin,
         LudoDiceMixin,
         LudoMovementMixin,
@@ -41,6 +48,16 @@ class LudoController extends ChangeNotifier
   String activeGameId = '';
   LudoGame? resumableGame;
   bool activeGameChecked = false;
+
+  ProgressionConfig progressionConfig = ProgressionConfig.defaults;
+  bool progressionConfigLoaded = false;
+  int profileXp = 0;
+  int profileCoins = 0;
+  int rewardedMatches = 0;
+  int rewardedWins = 0;
+  int rewardedPodiums = 0;
+
+  String localConnectionState = PlayerPresence.online;
 
   int turnSecondsRemaining = 0;
   Timer? _turnClockTimer;
@@ -86,6 +103,8 @@ class LudoController extends ChangeNotifier
 
   Future<void> _initialize() async {
     await initAuth();
+    await initializeGoogleAuth();
+    await loadProgressionConfig();
 
     if (user != null) {
       await loadMyProfile();
@@ -252,6 +271,7 @@ class LudoController extends ChangeNotifier
     _visualActiveMoveClearTimer?.cancel();
     _diceRollAnimationTimer?.cancel();
     _turnClockTimer?.cancel();
+    stopPresenceTracking();
     stopRoomHeartbeat();
     cancelBotTurn();
     hopFrameNotifier.dispose();

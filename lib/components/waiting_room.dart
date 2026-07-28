@@ -517,7 +517,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
                   ),
                   const SizedBox(height: 12),
                   _ToggleSetting(
-                    title: '🛠️ Sandbox Mode',
+                    title: 'ðŸ› ï¸ Sandbox Mode',
                     subtitle: isHost
                         ? 'Pieces start near the end for quick testing.'
                         : 'Only the host can change this setting.',
@@ -582,7 +582,7 @@ class _CompactHeader extends StatelessWidget {
             onPressed: onBack,
             icon: const Icon(Icons.arrow_back, color: Colors.white70),
           ),
-          const Text('🎲', style: TextStyle(fontSize: 26)),
+          const Text('ðŸŽ²', style: TextStyle(fontSize: 26)),
           const SizedBox(width: 8),
           const Expanded(
             child: Column(
@@ -680,7 +680,7 @@ class _RoomCodeStrip extends StatelessWidget {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('📋 Room code copied!'),
+                    content: Text('ðŸ“‹ Room code copied!'),
                     duration: Duration(seconds: 2),
                     behavior: SnackBarBehavior.floating,
                   ),
@@ -896,12 +896,15 @@ class _CompactPlayerSeat extends StatelessWidget {
         ? 'Creating AI player...'
         : 'Waiting for player';
 
+    final presenceLabel = occupied
+        ? controller.presenceLabelForPlayer(resolvedPlayerId)
+        : '';
     final subtitle = isPlayerHost
-        ? 'Host'
+        ? 'Host • $presenceLabel'
         : isBot
         ? 'AI opponent'
         : occupied
-        ? 'Connected'
+        ? presenceLabel
         : seatType == LudoGame.computerSeat
         ? 'AI slot'
         : 'Open real-player slot';
@@ -1240,7 +1243,7 @@ class _ColourAndSettingsRow extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '$boardLabel • $visibilityLabel',
+                          '$boardLabel â€¢ $visibilityLabel',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

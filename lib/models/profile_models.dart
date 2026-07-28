@@ -5,6 +5,11 @@ class PlayerProfile {
   final String displayName;
   final bool isAnonymous;
   final String activeGameId;
+  final int xp;
+  final int coins;
+  final int rewardedMatches;
+  final int rewardedWins;
+  final int rewardedPodiums;
   final Timestamp? createdAt;
   final Timestamp? updatedAt;
 
@@ -13,6 +18,11 @@ class PlayerProfile {
     required this.displayName,
     required this.isAnonymous,
     required this.activeGameId,
+    required this.xp,
+    required this.coins,
+    required this.rewardedMatches,
+    required this.rewardedWins,
+    required this.rewardedPodiums,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -23,6 +33,11 @@ class PlayerProfile {
       displayName: map['displayName'] as String? ?? '',
       isAnonymous: map['isAnonymous'] as bool? ?? true,
       activeGameId: map['activeGameId'] as String? ?? '',
+      xp: (map['xp'] as num?)?.toInt() ?? 0,
+      coins: (map['coins'] as num?)?.toInt() ?? 0,
+      rewardedMatches: (map['rewardedMatches'] as num?)?.toInt() ?? 0,
+      rewardedWins: (map['rewardedWins'] as num?)?.toInt() ?? 0,
+      rewardedPodiums: (map['rewardedPodiums'] as num?)?.toInt() ?? 0,
       createdAt: map['createdAt'] is Timestamp
           ? map['createdAt'] as Timestamp
           : null,

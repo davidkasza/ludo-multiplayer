@@ -168,7 +168,7 @@ mixin LudoMovementMixin on ChangeNotifier {
         localMovingPiece = null;
       }
 
-      statusMessage = '❌ Could not move the piece.';
+      statusMessage = 'âŒ Could not move the piece.';
       syncVisualActiveMove(null);
       notifyListeners();
 
@@ -419,6 +419,7 @@ mixin LudoMovementMixin on ChangeNotifier {
             'preferredColors': latestGame.preferredColors,
             'playerSeats': latestGame.playerSeats,
             'boardId': latestGame.boardId,
+            'isTestModeActive': latestGame.isTestModeActive,
             'playerCount': latestGame.players.length,
             'humanPlayerCount': humanPlayerCount,
             'botPlayerCount': latestGame.players.length - humanPlayerCount,
@@ -483,12 +484,12 @@ mixin LudoMovementMixin on ChangeNotifier {
 
     if (playerFinishedNow) {
       return matchFinished
-          ? '🏆 $name finished in ${_ordinal(placement)} place. Match complete!'
-          : '🏁 $name finished in ${_ordinal(placement)} place!';
+          ? 'ðŸ† $name finished in ${_ordinal(placement)} place. Match complete!'
+          : 'ðŸ $name finished in ${_ordinal(placement)} place!';
     }
-    if (didReachGoal) return '🎉 $name reached the goal and plays again.';
-    if (didCapture) return '💥 $name captured a piece and plays again.';
-    if (rolledSix) return '✨ $name rolled a 6 and plays again.';
+    if (didReachGoal) return 'ðŸŽ‰ $name reached the goal and plays again.';
+    if (didCapture) return 'ðŸ’¥ $name captured a piece and plays again.';
+    if (rolledSix) return 'âœ¨ $name rolled a 6 and plays again.';
     return '';
   }
 
