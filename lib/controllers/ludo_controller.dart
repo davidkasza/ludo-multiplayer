@@ -13,12 +13,14 @@ import 'mixins/ludo_bot_mixin.dart';
 import 'mixins/ludo_chat_mixin.dart';
 import 'mixins/ludo_dice_mixin.dart';
 import 'mixins/ludo_movement_mixin.dart';
+import 'mixins/ludo_profile_mixin.dart';
 import 'mixins/ludo_room_mixin.dart';
 import 'mixins/ludo_sandbox_mixin.dart';
 
 class LudoController extends ChangeNotifier
     with
         LudoAuthMixin,
+        LudoProfileMixin,
         LudoRoomMixin,
         LudoDiceMixin,
         LudoMovementMixin,
@@ -34,7 +36,22 @@ class LudoController extends ChangeNotifier
   LudoGame? game;
   String statusMessage = '';
 
+  String profileName = '';
+  bool profileLoaded = false;
+  String activeGameId = '';
+  LudoGame? resumableGame;
+  bool activeGameChecked = false;
+
+  int turnSecondsRemaining = 0;
+  Timer? _turnClockTimer;
+  String? _turnClockKey;
+
   bool isDiceRolling = false;
+  String? diceRollingPlayerId;
+
+  Timer? _diceRollAnimationTimer;
+  String? _lastSeenDiceRollKey;
+  String? _animatingDiceRollKey;
 
   final ValueNotifier<double> hopFrameNotifier = ValueNotifier<double>(0.0);
 
@@ -63,8 +80,19 @@ class LudoController extends ChangeNotifier
   ];
 
   LudoController() {
-    initAuth();
+    unawaited(_initialize());
     startHopAnimation();
+  }
+
+  Future<void> _initialize() async {
+    await initAuth();
+
+    if (user != null) {
+      await loadMyProfile();
+    } else {
+      profileLoaded = true;
+      notifyListeners();
+    }
   }
 
   int get visualMoveElapsedMs {
@@ -118,6 +146,97 @@ class LudoController extends ChangeNotifier
     notifyListeners();
   }
 
+  void syncDiceRollAnimation(ActiveDiceRoll? remoteRoll) {
+    if (remoteRoll == null) {
+      _lastSeenDiceRollKey = null;
+      return;
+    }
+
+    final key = remoteRoll.key;
+    if (_lastSeenDiceRollKey == key) return;
+
+    _lastSeenDiceRollKey = key;
+    _diceRollAnimationTimer?.cancel();
+    _animatingDiceRollKey = key;
+    diceRollingPlayerId = remoteRoll.playerId;
+    isDiceRolling = true;
+    notifyListeners();
+
+    _diceRollAnimationTimer = Timer(
+      Duration(milliseconds: remoteRoll.durationMs),
+          () {
+        if (_animatingDiceRollKey != key) return;
+
+        _diceRollAnimationTimer = null;
+        _animatingDiceRollKey = null;
+        diceRollingPlayerId = null;
+        isDiceRolling = false;
+        notifyListeners();
+      },
+    );
+  }
+
+  void stopDiceRollAnimation() {
+    final hadAnimation = isDiceRolling || diceRollingPlayerId != null;
+
+    _diceRollAnimationTimer?.cancel();
+    _diceRollAnimationTimer = null;
+    _lastSeenDiceRollKey = null;
+    _animatingDiceRollKey = null;
+    diceRollingPlayerId = null;
+    isDiceRolling = false;
+
+    if (hadAnimation) notifyListeners();
+  }
+
+  void syncTurnClock() {
+    final currentGame = game;
+    final deadline = currentGame?.turnDeadlineAt;
+    final key = currentGame == null || deadline == null
+        ? null
+        : '${currentGame.turnVersion}_${deadline.toDate().millisecondsSinceEpoch}';
+
+    if (key == null || currentGame?.status != 'playing') {
+      _turnClockTimer?.cancel();
+      _turnClockTimer = null;
+      _turnClockKey = null;
+      if (turnSecondsRemaining != 0) {
+        turnSecondsRemaining = 0;
+        notifyListeners();
+      }
+      return;
+    }
+    final currentDeadline = deadline;
+
+    if (currentDeadline == null) {
+      turnSecondsRemaining = 0;
+      notifyListeners();
+      return;
+    }
+
+    void updateRemaining() {
+      final milliseconds = currentDeadline
+          .toDate()
+          .difference(DateTime.now())
+          .inMilliseconds;
+
+      turnSecondsRemaining =
+      milliseconds <= 0 ? 0 : (milliseconds / 1000).ceil();
+
+      notifyListeners();
+    }
+
+    updateRemaining();
+    if (_turnClockKey == key && _turnClockTimer?.isActive == true) return;
+
+    _turnClockTimer?.cancel();
+    _turnClockKey = key;
+    _turnClockTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+          (_) => updateRemaining(),
+    );
+  }
+
   void startHopAnimation() {
     hopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
       if (localMovingPiece != null || visualActiveMove != null) {
@@ -131,6 +250,8 @@ class LudoController extends ChangeNotifier
     hopTimer?.cancel();
     gameSubscription?.cancel();
     _visualActiveMoveClearTimer?.cancel();
+    _diceRollAnimationTimer?.cancel();
+    _turnClockTimer?.cancel();
     stopRoomHeartbeat();
     cancelBotTurn();
     hopFrameNotifier.dispose();
@@ -148,7 +269,14 @@ class LudoController extends ChangeNotifier
   }
 
   bool get isMyTurn {
-    return game?.currentTurn == user?.uid;
+    final currentUserId = user?.uid;
+    final currentGame = game;
+
+    return currentUserId != null &&
+        currentGame != null &&
+        currentGame.currentTurn == currentUserId &&
+        !currentGame.finishOrder.contains(currentUserId) &&
+        !currentGame.aiControlledPlayers.contains(currentUserId);
   }
 
   bool get canRoll {
@@ -157,6 +285,7 @@ class LudoController extends ChangeNotifier
         !game!.hasRolled &&
         game!.status == 'playing' &&
         !isDiceRolling &&
+        game!.activeDiceRoll == null &&
         game!.activeMove == null &&
         visualActiveMove == null;
   }
@@ -168,6 +297,22 @@ class LudoController extends ChangeNotifier
 
   bool isBotPlayer(String playerId) {
     return playerId.startsWith('bot_');
+  }
+
+  bool isPlayerAiControlled(String playerId) {
+    return game?.isAiControlled(playerId) ?? isBotPlayer(playerId);
+  }
+
+  bool get isMyPlayerAiControlled {
+    final currentUserId = user?.uid;
+    return currentUserId != null &&
+        game?.aiControlledPlayers.contains(currentUserId) == true;
+  }
+
+  bool get isMyReconnectPending {
+    final currentUserId = user?.uid;
+    return currentUserId != null &&
+        game?.pendingReconnectPlayers.contains(currentUserId) == true;
   }
 
   String getPlayerDisplayTitle(String playerId) {
@@ -191,13 +336,20 @@ class LudoController extends ChangeNotifier
   }
 
   String getNextPlayerId(String currentPlayerId) {
-    final players = game?.players ?? const <String>[];
+    final currentGame = game;
+    final players = currentGame?.players ?? const <String>[];
     if (players.isEmpty) return currentPlayerId;
 
+    final finishedPlayers = currentGame?.finishOrder.toSet() ?? <String>{};
     final currentIndex = players.indexOf(currentPlayerId);
-    if (currentIndex < 0) return players.first;
+    final startIndex = currentIndex < 0 ? -1 : currentIndex;
 
-    return players[(currentIndex + 1) % players.length];
+    for (int offset = 1; offset <= players.length; offset++) {
+      final candidate = players[(startIndex + offset) % players.length];
+      if (!finishedPlayers.contains(candidate)) return candidate;
+    }
+
+    return currentPlayerId;
   }
 
   int getStartOffsetForIndex(int playerIndex) {

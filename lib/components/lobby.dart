@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
 import 'cyber_background.dart';
 import 'glass_panel.dart';
@@ -13,6 +14,11 @@ class Lobby extends StatefulWidget {
   final VoidCallback onPlayComputer;
   final VoidCallback onQuickMatch;
   final ValueChanged<String> onJoinGame;
+  final VoidCallback onOpenProfile;
+  final LudoGame? resumableGame;
+  final String resumableGameId;
+  final bool resumableGameAiControlled;
+  final VoidCallback onContinueGame;
   final String statusMessage;
 
   const Lobby({
@@ -23,6 +29,11 @@ class Lobby extends StatefulWidget {
     required this.onPlayComputer,
     required this.onQuickMatch,
     required this.onJoinGame,
+    required this.onOpenProfile,
+    required this.resumableGame,
+    required this.resumableGameId,
+    required this.resumableGameAiControlled,
+    required this.onContinueGame,
     required this.statusMessage,
   });
 
@@ -60,6 +71,8 @@ class _LobbyState extends State<Lobby> {
 
   @override
   Widget build(BuildContext context) {
+    final hasResumableMatch = widget.resumableGame != null;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: CyberBackground(
@@ -86,6 +99,27 @@ class _LobbyState extends State<Lobby> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: IconButton(
+                          tooltip: 'Player profile',
+                          onPressed: widget.onOpenProfile,
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.white.withOpacity(0.06),
+                            foregroundColor: AppColors.blueBright,
+                          ),
+                          icon: const Icon(Icons.account_circle_outlined),
+                        ),
+                      ),
+                      if (widget.resumableGame != null) ...[
+                        _ResumeMatchCard(
+                          game: widget.resumableGame!,
+                          roomId: widget.resumableGameId,
+                          aiControlled: widget.resumableGameAiControlled,
+                          onContinue: widget.onContinueGame,
+                        ),
+                        const SizedBox(height: 18),
+                      ],
                       const Text(
                         '🎲',
                         style: TextStyle(fontSize: 56, height: 1),
@@ -181,21 +215,21 @@ class _LobbyState extends State<Lobby> {
                               label: 'Quick Match',
                               icon: Icons.bolt,
                               color: AppColors.successGreen,
-                              onPressed: widget.onQuickMatch,
+                              onPressed: hasResumableMatch ? null : widget.onQuickMatch,
                             ),
                             const SizedBox(height: 10),
                             _LobbyButton(
                               label: 'Play vs Computer',
                               icon: Icons.smart_toy,
                               color: AppColors.yellowDark,
-                              onPressed: widget.onPlayComputer,
+                              onPressed: hasResumableMatch ? null : widget.onPlayComputer,
                             ),
                             const SizedBox(height: 10),
                             _LobbyButton(
                               label: 'Create Custom Room',
                               icon: Icons.add_circle_outline,
                               color: AppColors.blueBase,
-                              onPressed: widget.onCreateGame,
+                              onPressed: hasResumableMatch ? null : widget.onCreateGame,
                             ),
                           ],
                         ),
@@ -233,6 +267,7 @@ class _LobbyState extends State<Lobby> {
                           children: [
                             TextField(
                               controller: _roomController,
+                              enabled: !hasResumableMatch,
                               textAlign: TextAlign.center,
                               textCapitalization: TextCapitalization.characters,
                               style: const TextStyle(
@@ -271,7 +306,9 @@ class _LobbyState extends State<Lobby> {
                               label: 'Join Battle',
                               icon: Icons.login,
                               color: AppColors.blueBase,
-                              onPressed: () => widget.onJoinGame(
+                              onPressed: hasResumableMatch
+                                  ? null
+                                  : () => widget.onJoinGame(
                                 _roomController.text,
                               ),
                             ),
@@ -290,11 +327,105 @@ class _LobbyState extends State<Lobby> {
   }
 }
 
+class _ResumeMatchCard extends StatelessWidget {
+  final LudoGame game;
+  final String roomId;
+  final bool aiControlled;
+  final VoidCallback onContinue;
+
+  const _ResumeMatchCard({
+    required this.game,
+    required this.roomId,
+    required this.aiControlled,
+    required this.onContinue,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final boardLabel = game.boardId == 'classic' ? 'Classic board' : 'Circular board';
+    final stateLabel = game.status == 'waiting' ? 'Waiting room' : 'Match in progress';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.blueBase.withOpacity(0.11),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.blueBright.withOpacity(0.42)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.play_circle_outline, color: AppColors.blueBright),
+              SizedBox(width: 8),
+              Text(
+                'MATCH IN PROGRESS',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$stateLabel • Room $roomId',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${game.players.length} players • $boardLabel${aiControlled ? ' • AI is playing for you' : ''}',
+            style: TextStyle(
+              color: aiControlled
+                  ? AppColors.yellowBright
+                  : Colors.white.withOpacity(0.48),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Continue or forfeit this match before starting another one.',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.38),
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: onContinue,
+            icon: const Icon(Icons.login_rounded, size: 19),
+            label: const Text(
+              'Continue Match',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.blueBase,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LobbyButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _LobbyButton({
     required this.label,

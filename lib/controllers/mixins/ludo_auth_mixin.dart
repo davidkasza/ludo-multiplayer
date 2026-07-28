@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
 mixin LudoAuthMixin on ChangeNotifier {
   FirebaseAuth get auth;
@@ -9,12 +9,19 @@ mixin LudoAuthMixin on ChangeNotifier {
 
   Future<void> initAuth() async {
     try {
-      final res = await auth.signInAnonymously();
-      user = res.user;
+      final existingUser = auth.currentUser;
+
+      if (existingUser != null) {
+        user = existingUser;
+      } else {
+        final result = await auth.signInAnonymously();
+        user = result.user;
+      }
+
       notifyListeners();
-    } catch (e) {
+    } catch (error) {
       if (kDebugMode) {
-        print("Auth error: $e");
+        print('Auth error: $error');
       }
     }
   }

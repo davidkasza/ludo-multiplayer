@@ -32,8 +32,21 @@ mixin LudoRoomMixin on ChangeNotifier {
 
   List<Map<String, dynamic>> createDefaultPieces(int initialPos);
   void syncVisualActiveMove(ActiveMove? remoteMove);
+  void syncDiceRollAnimation(ActiveDiceRoll? remoteRoll);
+  void stopDiceRollAnimation();
   void syncBotTurn();
   void cancelBotTurn();
+  void syncTurnClock();
+
+  String get activeGameId;
+  set activeGameId(String value);
+  LudoGame? get resumableGame;
+  set resumableGame(LudoGame? value);
+
+  Future<void> setMyActiveGame(String roomId);
+  Future<void> clearMyActiveGame({String? expectedGameId});
+  Future<void> refreshResumableGame();
+  Future<bool> markMyselfForfeit();
 
   static const String _roomCodeChars =
       'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -261,6 +274,7 @@ mixin LudoRoomMixin on ChangeNotifier {
           (snap) {
         if (!snap.exists || snap.data() == null) {
           if (gameId == id) {
+            unawaited(clearMyActiveGame(expectedGameId: id));
             _resetLocalGame(
               message: 'The room no longer exists.',
             );
@@ -272,15 +286,64 @@ mixin LudoRoomMixin on ChangeNotifier {
 
         syncVisualActiveMove(nextGame.activeMove);
         game = nextGame;
+        syncDiceRollAnimation(nextGame.activeDiceRoll);
+        syncTurnClock();
         syncRoomHeartbeat();
+
+        final currentUserId = user?.uid;
+        if (nextGame.status == 'finished' &&
+            currentUserId != null &&
+            nextGame.players.contains(currentUserId)) {
+          unawaited(clearMyActiveGame(expectedGameId: id));
+        } else if (nextGame.status == 'playing' &&
+            nextGame.turnDeadlineAt == null) {
+          unawaited(_ensureTurnStateInitialized(id));
+        }
+
         notifyListeners();
         syncBotTurn();
       },
       onError: (Object error) {
-        statusMessage = '❌ Lost connection to the room.';
+        statusMessage = 'Ã¢ÂÅ’ Lost connection to the room.';
         notifyListeners();
       },
     );
+  }
+
+  Future<void> _ensureTurnStateInitialized(String roomId) async {
+    final reference = db.collection('games').doc(roomId);
+
+    try {
+      await db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(reference);
+        if (!snapshot.exists || snapshot.data() == null) return;
+
+        final latest = LudoGame.fromMap(snapshot.data()!);
+        if (latest.status != 'playing' || latest.turnDeadlineAt != null) return;
+
+        final waitingForMove = latest.hasRolled;
+        transaction.update(reference, {
+          'turnPhase': waitingForMove
+              ? LudoGame.waitingForMove
+              : LudoGame.waitingForRoll,
+          'turnDeadlineAt': Timestamp.fromDate(
+            DateTime.now().toUtc().add(
+              waitingForMove
+                  ? const Duration(seconds: 30)
+                  : const Duration(seconds: 10),
+            ),
+          ),
+          'turnVersion': latest.turnVersion <= 0 ? 1 : latest.turnVersion,
+          'aiControlledPlayers': latest.aiControlledPlayers,
+          'pendingReconnectPlayers': latest.pendingReconnectPlayers,
+          'forfeitedPlayers': latest.forfeitedPlayers,
+          'automationLease': null,
+          'lastActivityAt': FieldValue.serverTimestamp(),
+        });
+      });
+    } catch (error) {
+      if (kDebugMode) print('Turn-state migration error: $error');
+    }
   }
 
   Future<void> createGame(
@@ -293,7 +356,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         bool isPublic = true,
       }) async {
     if (user == null || playerName.trim().isEmpty) {
-      statusMessage = '❌ Please enter a nickname.';
+      statusMessage = 'Ã¢ÂÅ’ Please enter a nickname.';
       notifyListeners();
       return;
     }
@@ -365,6 +428,9 @@ mixin LudoRoomMixin on ChangeNotifier {
       'hasRolled': false,
       'status': 'waiting',
       'winnerUid': '',
+      'finishOrder': const <String>[],
+      'startedAt': null,
+      'finishedAt': null,
       'boardId': selectedBoard,
       'isTestModeActive': isTestMode,
       'maxPlayers': safeMaxPlayers,
@@ -385,15 +451,25 @@ mixin LudoRoomMixin on ChangeNotifier {
       ).toMap(),
       'pieces': pieces,
       'activeMove': null,
+      'activeDiceRoll': null,
+      'turnPhase': LudoGame.waitingForRoll,
+      'turnDeadlineAt': null,
+      'turnVersion': 0,
+      'aiControlledPlayers': const <String>[],
+      'pendingReconnectPlayers': const <String>[],
+      'forfeitedPlayers': const <String>[],
+      'automationLease': null,
+      'systemEvent': null,
     };
 
     try {
       final roomCode = await _createGameWithUniqueRoomCode(gameData);
 
       gameId = roomCode;
+      await setMyActiveGame(roomCode);
       listenGame(roomCode);
     } catch (error) {
-      statusMessage = '❌ Could not create the room.';
+      statusMessage = 'Ã¢ÂÅ’ Could not create the room.';
       notifyListeners();
 
       if (kDebugMode) {
@@ -427,7 +503,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       }) async {
     if (user == null || playerName.trim().isEmpty) {
       if (showErrors) {
-        statusMessage = '❌ Please enter a nickname.';
+        statusMessage = 'Ã¢ÂÅ’ Please enter a nickname.';
         notifyListeners();
       }
       return false;
@@ -437,7 +513,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     if (cleanInputId.isEmpty) {
       if (showErrors) {
-        statusMessage = '❌ Please enter a room code.';
+        statusMessage = 'Ã¢ÂÅ’ Please enter a room code.';
         notifyListeners();
       }
       return false;
@@ -458,6 +534,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       if (!joined) return false;
 
       gameId = cleanInputId;
+      await setMyActiveGame(cleanInputId);
       listenGame(cleanInputId);
       return true;
     } catch (error) {
@@ -465,16 +542,16 @@ mixin LudoRoomMixin on ChangeNotifier {
         final message = error.toString();
 
         if (message.contains('Game not found')) {
-          statusMessage = '❌ Game not found.';
+          statusMessage = 'Ã¢ÂÅ’ Game not found.';
         } else if (message.contains('already full') ||
             message.contains('no open human seat')) {
-          statusMessage = '❌ This room has no open human seat.';
+          statusMessage = 'Ã¢ÂÅ’ This room has no open human seat.';
         } else if (message.contains('already started')) {
-          statusMessage = '❌ This match has already started.';
+          statusMessage = 'Ã¢ÂÅ’ This match has already started.';
         } else if (message.contains('expired')) {
-          statusMessage = '❌ This room has expired.';
+          statusMessage = 'Ã¢ÂÅ’ This room has expired.';
         } else {
-          statusMessage = '❌ Could not join the room.';
+          statusMessage = 'Ã¢ÂÅ’ Could not join the room.';
         }
 
         notifyListeners();
@@ -616,6 +693,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         'matchmakingOpen': isPublic && openHumanSeats > 0,
         'status': 'waiting',
         'activeMove': null,
+        'activeDiceRoll': null,
         'lastActivityAt': FieldValue.serverTimestamp(),
         'expiresAt': _expiresAfter(waitingRoomLease),
       });
@@ -630,7 +708,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       bool isTestMode,
       ) async {
     if (user == null || playerName.trim().isEmpty) {
-      statusMessage = '❌ Please enter a nickname.';
+      statusMessage = 'Ã¢ÂÅ’ Please enter a nickname.';
       notifyListeners();
       return;
     }
@@ -686,6 +764,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
         if (joined) {
           gameId = candidate.id;
+          await setMyActiveGame(candidate.id);
           listenGame(candidate.id);
           statusMessage = '';
           notifyListeners();
@@ -711,7 +790,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         notifyListeners();
       }
     } catch (error) {
-      statusMessage = '❌ Matchmaking failed.';
+      statusMessage = 'Ã¢ÂÅ’ Matchmaking failed.';
       notifyListeners();
 
       if (kDebugMode) {
@@ -872,7 +951,20 @@ mixin LudoRoomMixin on ChangeNotifier {
           'currentTurn': updatedPlayers.isNotEmpty
               ? updatedPlayers.first
               : '',
+          'winnerUid': '',
+          'finishOrder': const <String>[],
+          'startedAt': null,
+          'finishedAt': null,
           'activeMove': null,
+          'activeDiceRoll': null,
+          'turnPhase': LudoGame.waitingForRoll,
+          'turnDeadlineAt': null,
+          'turnVersion': 0,
+          'aiControlledPlayers': const <String>[],
+          'pendingReconnectPlayers': const <String>[],
+          'forfeitedPlayers': const <String>[],
+          'automationLease': null,
+          'systemEvent': null,
           'lastActivityAt': FieldValue.serverTimestamp(),
           'expiresAt': _expiresAfter(waitingRoomLease),
         });
@@ -906,7 +998,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     if (!game!.isReady) {
       statusMessage =
-      '⚠️ Waiting for ${game!.openHumanSeats} more real player(s).';
+      'Ã¢Å¡Â Ã¯Â¸Â Waiting for ${game!.openHumanSeats} more real player(s).';
       notifyListeners();
       return;
     }
@@ -919,7 +1011,22 @@ mixin LudoRoomMixin on ChangeNotifier {
       'currentTurn': game!.players.first,
       'diceValue': 0,
       'hasRolled': false,
+      'winnerUid': '',
+      'finishOrder': const <String>[],
+      'startedAt': FieldValue.serverTimestamp(),
+      'finishedAt': null,
       'activeMove': null,
+      'activeDiceRoll': null,
+      'turnPhase': LudoGame.waitingForRoll,
+      'turnDeadlineAt': Timestamp.fromDate(
+        DateTime.now().toUtc().add(const Duration(seconds: 10)),
+      ),
+      'turnVersion': 1,
+      'aiControlledPlayers': const <String>[],
+      'pendingReconnectPlayers': const <String>[],
+      'forfeitedPlayers': const <String>[],
+      'automationLease': null,
+      'systemEvent': null,
       'matchmakingOpen': false,
       'openSeats': 0,
       'lastActivityAt': FieldValue.serverTimestamp(),
@@ -1011,10 +1118,76 @@ mixin LudoRoomMixin on ChangeNotifier {
       }
     }
 
+    await clearMyActiveGame(expectedGameId: currentGameId);
+    _resetLocalGame();
+  }
+
+  Future<bool> continueActiveGame() async {
+    final currentUser = user;
+    final roomId = activeGameId;
+    if (currentUser == null || roomId.isEmpty) return false;
+
+    try {
+      final snapshot = await db.collection('games').doc(roomId).get();
+      if (!snapshot.exists || snapshot.data() == null) {
+        await clearMyActiveGame(expectedGameId: roomId);
+        return false;
+      }
+
+      final candidate = LudoGame.fromMap(snapshot.data()!);
+      if (!candidate.players.contains(currentUser.uid) ||
+          (candidate.status != 'waiting' && candidate.status != 'playing')) {
+        await clearMyActiveGame(expectedGameId: roomId);
+        return false;
+      }
+
+      gameId = roomId;
+      game = candidate;
+      resumableGame = null;
+      listenGame(roomId);
+      notifyListeners();
+      return true;
+    } catch (error) {
+      statusMessage = '❌ Could not reconnect to the match.';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> reconnectCurrentGame() async {
+    if (gameId.isNotEmpty && game != null) {
+      listenGame(gameId);
+      return;
+    }
+    await refreshResumableGame();
+  }
+
+  void leaveTemporarily() {
+    if (gameId.isNotEmpty && game != null) {
+      activeGameId = gameId;
+      resumableGame = game;
+    }
+    _resetLocalGame();
+  }
+
+  Future<void> forfeitAndLeave() async {
+    final currentId = gameId;
+    final forfeited = await markMyselfForfeit();
+    if (!forfeited) {
+      statusMessage = '❌ Could not forfeit the match.';
+      notifyListeners();
+      return;
+    }
+
+    await clearMyActiveGame(expectedGameId: currentId);
     _resetLocalGame();
   }
 
   void quitToMenu() {
+    final currentId = gameId;
+    if (game?.status == 'finished' && currentId.isNotEmpty) {
+      unawaited(clearMyActiveGame(expectedGameId: currentId));
+    }
     _resetLocalGame();
   }
 
@@ -1023,10 +1196,12 @@ mixin LudoRoomMixin on ChangeNotifier {
     gameSubscription = null;
     stopRoomHeartbeat();
     cancelBotTurn();
+    stopDiceRollAnimation();
     gameId = '';
     game = null;
     statusMessage = message;
     syncVisualActiveMove(null);
+    syncTurnClock();
     notifyListeners();
   }
 }

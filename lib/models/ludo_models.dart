@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class LudoPiece {
   final int id;
   final int pos;
@@ -196,6 +198,106 @@ class LudoChat {
   }
 }
 
+class ActiveDiceRoll {
+  final String playerId;
+  final int startedAt;
+  final int durationMs;
+
+  const ActiveDiceRoll({
+    required this.playerId,
+    required this.startedAt,
+    required this.durationMs,
+  });
+
+  String get key => '${playerId}_$startedAt';
+
+  factory ActiveDiceRoll.fromMap(Map<String, dynamic> map) {
+    return ActiveDiceRoll(
+      playerId: map['playerId'] as String? ?? '',
+      startedAt: map['startedAt'] as int? ??
+          DateTime.now().millisecondsSinceEpoch,
+      durationMs: map['durationMs'] as int? ?? 800,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'playerId': playerId,
+      'startedAt': startedAt,
+      'durationMs': durationMs,
+    };
+  }
+}
+
+
+
+class AutomationLease {
+  final String ownerUid;
+  final int turnVersion;
+  final Timestamp expiresAt;
+
+  const AutomationLease({
+    required this.ownerUid,
+    required this.turnVersion,
+    required this.expiresAt,
+  });
+
+  bool get isExpired => expiresAt.toDate().isBefore(DateTime.now());
+
+  factory AutomationLease.fromMap(Map<String, dynamic> map) {
+    final rawExpiry = map['expiresAt'];
+    return AutomationLease(
+      ownerUid: map['ownerUid'] as String? ?? '',
+      turnVersion: map['turnVersion'] as int? ?? 0,
+      expiresAt: rawExpiry is Timestamp ? rawExpiry : Timestamp.now(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'ownerUid': ownerUid,
+      'turnVersion': turnVersion,
+      'expiresAt': expiresAt,
+    };
+  }
+}
+
+class GameSystemEvent {
+  static const String aiTakeover = 'aiTakeover';
+  static const String playerReconnected = 'playerReconnected';
+  static const String playerForfeited = 'playerForfeited';
+
+  final String id;
+  final String type;
+  final String playerId;
+  final int createdAtMs;
+
+  const GameSystemEvent({
+    required this.id,
+    required this.type,
+    required this.playerId,
+    required this.createdAtMs,
+  });
+
+  factory GameSystemEvent.fromMap(Map<String, dynamic> map) {
+    return GameSystemEvent(
+      id: map['id'] as String? ?? '',
+      type: map['type'] as String? ?? '',
+      playerId: map['playerId'] as String? ?? '',
+      createdAtMs: map['createdAtMs'] as int? ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'type': type,
+      'playerId': playerId,
+      'createdAtMs': createdAtMs,
+    };
+  }
+}
+
 class LudoGame {
   static const String humanOpponents = 'human';
   static const String computerOpponents = 'computer';
@@ -203,6 +305,9 @@ class LudoGame {
 
   static const String humanSeat = 'human';
   static const String computerSeat = 'computer';
+
+  static const String waitingForRoll = 'waitingForRoll';
+  static const String waitingForMove = 'waitingForMove';
 
   final List<String> players;
   final Map<String, String> playerNames;
@@ -215,6 +320,9 @@ class LudoGame {
   final bool hasRolled;
   final String status;
   final String winnerUid;
+  final List<String> finishOrder;
+  final Timestamp? startedAt;
+  final Timestamp? finishedAt;
   final String boardId;
   final bool isTestModeActive;
   final int maxPlayers;
@@ -224,6 +332,15 @@ class LudoGame {
   final LudoChat activeChat;
   final Map<String, List<LudoPiece>> pieces;
   final ActiveMove? activeMove;
+  final ActiveDiceRoll? activeDiceRoll;
+  final String turnPhase;
+  final Timestamp? turnDeadlineAt;
+  final int turnVersion;
+  final List<String> aiControlledPlayers;
+  final List<String> pendingReconnectPlayers;
+  final List<String> forfeitedPlayers;
+  final AutomationLease? automationLease;
+  final GameSystemEvent? systemEvent;
 
   const LudoGame({
     required this.players,
@@ -237,6 +354,9 @@ class LudoGame {
     required this.hasRolled,
     required this.status,
     required this.winnerUid,
+    required this.finishOrder,
+    required this.startedAt,
+    required this.finishedAt,
     required this.boardId,
     required this.isTestModeActive,
     required this.maxPlayers,
@@ -246,6 +366,15 @@ class LudoGame {
     required this.activeChat,
     required this.pieces,
     required this.activeMove,
+    required this.activeDiceRoll,
+    required this.turnPhase,
+    required this.turnDeadlineAt,
+    required this.turnVersion,
+    required this.aiControlledPlayers,
+    required this.pendingReconnectPlayers,
+    required this.forfeitedPlayers,
+    required this.automationLease,
+    required this.systemEvent,
   });
 
   static List<int> seatLayoutForMaxPlayers(int maxPlayers) {
@@ -367,6 +496,31 @@ class LudoGame {
     return true;
   }
 
+  bool isPlayerFinished(String playerId) => finishOrder.contains(playerId);
+
+  int placementFor(String playerId) {
+    final index = finishOrder.indexOf(playerId);
+    return index < 0 ? 0 : index + 1;
+  }
+
+  bool isAiControlled(String playerId) {
+    return playerId.startsWith('bot_') || aiControlledPlayers.contains(playerId);
+  }
+
+  bool isPendingReconnect(String playerId) {
+    return pendingReconnectPlayers.contains(playerId);
+  }
+
+  bool hasForfeited(String playerId) {
+    return forfeitedPlayers.contains(playerId);
+  }
+
+  Duration? get matchDuration {
+    if (startedAt == null || finishedAt == null) return null;
+    final duration = finishedAt!.toDate().difference(startedAt!.toDate());
+    return duration.isNegative ? Duration.zero : duration;
+  }
+
   factory LudoGame.fromMap(Map<String, dynamic> map) {
     final players = List<String>.from(map['players'] ?? []);
     final piecesMap = <String, List<LudoPiece>>{};
@@ -430,8 +584,42 @@ class LudoGame {
     );
     final status = map['status'] as String? ?? 'waiting';
     final isPublic = map['isPublic'] as bool? ?? true;
+    final occupiedSeats = playerSeats.entries
+        .where((entry) => players.contains(entry.key))
+        .map((entry) => entry.value)
+        .toSet();
+    final hasOpenHumanSeat = layout.any(
+          (seat) => seatTypes[seat] == humanSeat && !occupiedSeats.contains(seat),
+    );
 
-    final parsedGame = LudoGame(
+    final rawFinishOrder = List<String>.from(map['finishOrder'] ?? const []);
+    final finishOrder = <String>[];
+    for (final playerId in rawFinishOrder) {
+      if (players.contains(playerId) && !finishOrder.contains(playerId)) {
+        finishOrder.add(playerId);
+      }
+    }
+
+    final legacyWinner = map['winnerUid'] as String? ?? '';
+    if (finishOrder.isEmpty &&
+        status == 'finished' &&
+        legacyWinner.isNotEmpty &&
+        players.contains(legacyWinner)) {
+      finishOrder.add(legacyWinner);
+      finishOrder.addAll(players.where((id) => id != legacyWinner));
+    }
+
+    final aiControlledPlayers = List<String>.from(
+      map['aiControlledPlayers'] ?? const <String>[],
+    ).where(players.contains).toSet().toList();
+    final pendingReconnectPlayers = List<String>.from(
+      map['pendingReconnectPlayers'] ?? const <String>[],
+    ).where(players.contains).toSet().toList();
+    final forfeitedPlayers = List<String>.from(
+      map['forfeitedPlayers'] ?? const <String>[],
+    ).where(players.contains).toSet().toList();
+
+    return LudoGame(
       players: players,
       playerNames: playerNames,
       preferredColors: preferredColors,
@@ -443,13 +631,23 @@ class LudoGame {
       diceValue: map['diceValue'] as int? ?? 0,
       hasRolled: map['hasRolled'] as bool? ?? false,
       status: status,
-      winnerUid: map['winnerUid'] as String? ?? '',
+      winnerUid: legacyWinner.isNotEmpty
+          ? legacyWinner
+          : (finishOrder.isNotEmpty ? finishOrder.first : ''),
+      finishOrder: finishOrder,
+      startedAt: map['startedAt'] is Timestamp
+          ? map['startedAt'] as Timestamp
+          : null,
+      finishedAt: map['finishedAt'] is Timestamp
+          ? map['finishedAt'] as Timestamp
+          : null,
       boardId: map['boardId'] as String? ?? 'classic',
-      isTestModeActive: map['isTestModeActive'] as bool? ?? false,
+      isTestModeActive: map['isTestModeActive'] == true,
       maxPlayers: maxPlayers,
       opponentType: derivedOpponentType,
       isPublic: isPublic,
-      matchmakingOpen: map['matchmakingOpen'] as bool? ?? false,
+      matchmakingOpen: map['matchmakingOpen'] as bool? ??
+          (status == 'waiting' && isPublic && hasOpenHumanSeat),
       activeChat: LudoChat.fromMap(
         Map<String, dynamic>.from(map['activeChat'] ?? {}),
       ),
@@ -459,32 +657,32 @@ class LudoGame {
           : ActiveMove.fromMap(
         Map<String, dynamic>.from(map['activeMove']),
       ),
-    );
-
-    return LudoGame(
-      players: parsedGame.players,
-      playerNames: parsedGame.playerNames,
-      preferredColors: parsedGame.preferredColors,
-      playerSeats: parsedGame.playerSeats,
-      seatTypes: parsedGame.seatTypes,
-      hostUid: parsedGame.hostUid,
-      currentTurn: parsedGame.currentTurn,
-      diceValue: parsedGame.diceValue,
-      hasRolled: parsedGame.hasRolled,
-      status: parsedGame.status,
-      winnerUid: parsedGame.winnerUid,
-      boardId: parsedGame.boardId,
-      isTestModeActive: parsedGame.isTestModeActive,
-      maxPlayers: parsedGame.maxPlayers,
-      opponentType: parsedGame.opponentType,
-      isPublic: parsedGame.isPublic,
-      matchmakingOpen: map['matchmakingOpen'] as bool? ??
-          (status == 'waiting' &&
-              isPublic &&
-              parsedGame.openHumanSeats > 0),
-      activeChat: parsedGame.activeChat,
-      pieces: parsedGame.pieces,
-      activeMove: parsedGame.activeMove,
+      activeDiceRoll: map['activeDiceRoll'] == null
+          ? null
+          : ActiveDiceRoll.fromMap(
+        Map<String, dynamic>.from(map['activeDiceRoll']),
+      ),
+      turnPhase: map['turnPhase'] as String? ??
+          ((map['hasRolled'] as bool? ?? false)
+              ? waitingForMove
+              : waitingForRoll),
+      turnDeadlineAt: map['turnDeadlineAt'] is Timestamp
+          ? map['turnDeadlineAt'] as Timestamp
+          : null,
+      turnVersion: map['turnVersion'] as int? ?? 0,
+      aiControlledPlayers: aiControlledPlayers,
+      pendingReconnectPlayers: pendingReconnectPlayers,
+      forfeitedPlayers: forfeitedPlayers,
+      automationLease: map['automationLease'] == null
+          ? null
+          : AutomationLease.fromMap(
+        Map<String, dynamic>.from(map['automationLease']),
+      ),
+      systemEvent: map['systemEvent'] == null
+          ? null
+          : GameSystemEvent.fromMap(
+        Map<String, dynamic>.from(map['systemEvent']),
+      ),
     );
   }
 
@@ -510,6 +708,9 @@ class LudoGame {
       'hasRolled': hasRolled,
       'status': status,
       'winnerUid': winnerUid,
+      'finishOrder': finishOrder,
+      'startedAt': startedAt,
+      'finishedAt': finishedAt,
       'boardId': boardId,
       'isTestModeActive': isTestModeActive,
       'maxPlayers': maxPlayers,
@@ -522,6 +723,15 @@ class LudoGame {
       'activeChat': activeChat.toMap(),
       'pieces': piecesMap,
       'activeMove': activeMove?.toMap(),
+      'activeDiceRoll': activeDiceRoll?.toMap(),
+      'turnPhase': turnPhase,
+      'turnDeadlineAt': turnDeadlineAt,
+      'turnVersion': turnVersion,
+      'aiControlledPlayers': aiControlledPlayers,
+      'pendingReconnectPlayers': pendingReconnectPlayers,
+      'forfeitedPlayers': forfeitedPlayers,
+      'automationLease': automationLease?.toMap(),
+      'systemEvent': systemEvent?.toMap(),
     };
   }
 }
