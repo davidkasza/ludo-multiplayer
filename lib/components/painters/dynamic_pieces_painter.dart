@@ -17,7 +17,7 @@ class DynamicPiecesPainter extends CustomPainter {
   final LudoGame? game;
   final String? currentUserId;
   final int myPlayerIndex;
-  final bool isMyTurn;
+  final bool canSelectPieces;
   final double animationFrame;
   final ActiveMove? visualActiveMove;
   final int visualMoveElapsedMs;
@@ -27,7 +27,7 @@ class DynamicPiecesPainter extends CustomPainter {
     required this.game,
     required this.currentUserId,
     required this.myPlayerIndex,
-    required this.isMyTurn,
+    required this.canSelectPieces,
     required this.animationFrame,
     required this.visualActiveMove,
     required this.visualMoveElapsedMs,
@@ -246,31 +246,44 @@ class DynamicPiecesPainter extends CustomPainter {
         return a.piece.id.compareTo(b.piece.id);
       });
 
-      for (int index = 0; index < group.length; index++) {
-        final drawable = group[index];
-        var center = drawable.center +
+      final centers = List<Offset>.generate(
+        group.length,
+        (index) =>
+            group[index].center +
             _getStackOffset(
               index: index,
               count: group.length,
               cellSize: cellSize,
+            ),
+        growable: false,
+      );
+
+      // Draw every indicator first so a later piece in the same stack cannot
+      // paint its glow over (or hide the glow beneath) an earlier piece.
+      for (int index = 0; index < group.length; index++) {
+        final drawable = group[index];
+        final isSelectable =
+            drawable.isCurrentPlayer &&
+            LudoPresentation.isPieceSelectable(
+              canSelectPieces: canSelectPieces,
+              piece: drawable.piece,
+              diceValue: game!.diceValue,
             );
-
-        final isAtGoal = drawable.piece.inHome && drawable.piece.pos == 5;
-
-        final isSelectable = drawable.isCurrentPlayer &&
-            isMyTurn &&
-            game!.hasRolled &&
-            visualActiveMove == null &&
-            LudoRules.isValidMove(drawable.piece, game!.diceValue);
 
         if (isSelectable) {
           SelectableGlowPainter.draw(
             canvas: canvas,
-            center: center,
+            center: centers[index],
             color: drawable.colorBright,
             cellSize: cellSize,
           );
         }
+      }
+
+      for (int index = 0; index < group.length; index++) {
+        final drawable = group[index];
+        final center = centers[index];
+        final isAtGoal = drawable.piece.inHome && drawable.piece.pos == 5;
 
         if (drawable.rotation != 0) {
           canvas.save();
@@ -442,7 +455,7 @@ class DynamicPiecesPainter extends CustomPainter {
     return oldDelegate.game != game ||
         oldDelegate.currentUserId != currentUserId ||
         oldDelegate.myPlayerIndex != myPlayerIndex ||
-        oldDelegate.isMyTurn != isMyTurn ||
+        oldDelegate.canSelectPieces != canSelectPieces ||
         oldDelegate.animationFrame != animationFrame ||
         oldDelegate.visualActiveMove != visualActiveMove ||
         oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs ||

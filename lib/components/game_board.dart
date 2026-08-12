@@ -76,7 +76,7 @@ class GameBoard extends StatelessWidget {
                                 game: controller.game,
                                 currentUserId: controller.user?.uid,
                                 myPlayerIndex: controller.myPlayerIndex,
-                                isMyTurn: controller.canSelectPiece,
+                                canSelectPieces: controller.canSelectPiece,
                                 animationFrame:
                                     controller.moveAnimationFrameNotifier.value,
                                 visualActiveMove:

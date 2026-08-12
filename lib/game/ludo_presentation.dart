@@ -1,4 +1,5 @@
 import '../models/ludo_models.dart';
+import 'ludo_rules.dart';
 
 /// Pure helpers for sequencing visual game presentation independently from
 /// authoritative multiplayer state.
@@ -97,6 +98,14 @@ class LudoPresentation {
         isWaitingForMove &&
         !isDiceRolling &&
         !hasActiveMovePresentation;
+  }
+
+  static bool isPieceSelectable({
+    required bool canSelectPieces,
+    required LudoPiece piece,
+    required int diceValue,
+  }) {
+    return canSelectPieces && LudoRules.isValidMove(piece, diceValue);
   }
 
   static double _smoothStep(double value) {
