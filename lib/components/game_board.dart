@@ -76,7 +76,9 @@ class GameBoard extends StatelessWidget {
                                 game: controller.game,
                                 currentUserId: controller.user?.uid,
                                 myPlayerIndex: controller.myPlayerIndex,
-                                isMyTurn: controller.isMyTurn,
+                                isMyTurn:
+                                    controller.isMyTurn &&
+                                    !controller.isDicePresentationActive,
                                 hopFrame:
                                 controller.hopFrameNotifier.value,
                                 visualActiveMove:
@@ -105,7 +107,10 @@ class GameBoard extends StatelessWidget {
 
     if (game == null || !controller.isMyTurn) return;
     if (!game.hasRolled) return;
-    if (controller.visualActiveMove != null || controller.isDiceRolling) return;
+    if (controller.visualActiveMove != null ||
+        controller.isDicePresentationActive) {
+      return;
+    }
     if (controller.myPlayerIndex < 0) return;
 
     final scale = LudoBoardMapper.baseResolution / boardSize;

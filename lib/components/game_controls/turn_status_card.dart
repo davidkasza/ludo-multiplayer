@@ -21,13 +21,13 @@ class TurnStatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = controller;
     final game = c.game;
-    final currentTurnId = game?.currentTurn ?? '';
+    final currentTurnId = c.visualTurnPlayerId;
     final currentStyle = c.colorStyleForPlayer(currentTurnId);
     final myStyle = c.colorStyleForPlayer(c.user?.uid ?? '');
     final currentIsAutomated = c.isPlayerAiControlled(currentTurnId);
     final myId = c.user?.uid ?? '';
     final myPlacement = game?.placementFor(myId) ?? 0;
-    final iAmFinished = myPlacement > 0;
+    final iAmFinished = c.isPlayerVisuallyFinished(myId);
     final rollingPlayerId = c.diceRollingPlayerId ?? currentTurnId;
     final rollingPlayerName = c.getPlayerDisplayTitle(rollingPlayerId);
 
@@ -37,26 +37,26 @@ class TurnStatusCard extends StatelessWidget {
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: c.isMyTurn
+            color: c.isVisualMyTurn
                 ? myStyle.base.withOpacity(0.08)
                 : Colors.white.withOpacity(0.03),
             border: Border.all(
-              color: c.isMyTurn
+              color: c.isVisualMyTurn
                   ? myStyle.bright.withOpacity(0.5)
                   : Colors.white.withOpacity(0.1),
-              width: c.isMyTurn ? 2 : 1,
+              width: c.isVisualMyTurn ? 2 : 1,
             ),
             borderRadius: BorderRadius.circular(14),
             boxShadow: c.canRoll
                 ? [
-              BoxShadow(
-                color: myStyle.base.withOpacity(
-                  pulseAnimation.value * 0.3,
-                ),
-                blurRadius: 10,
-                spreadRadius: 1,
-              ),
-            ]
+                    BoxShadow(
+                      color: myStyle.base.withOpacity(
+                        pulseAnimation.value * 0.3,
+                      ),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                    ),
+                  ]
                 : null,
           ),
           child: child,
@@ -82,54 +82,57 @@ class TurnStatusCard extends StatelessWidget {
                   child: ValueListenableBuilder<int>(
                     valueListenable: c.turnSecondsNotifier,
                     builder: (context, seconds, child) => Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              game?.status == 'waiting'
-                                  ? 'Waiting...'
-                                  : iAmFinished
-                                  ? 'YOU FINISHED #$myPlacement'
-                                  : c.isMyTurn
-                                  ? 'YOUR TURN!'
-                                  : c.getPlayerDisplayTitle(currentTurnId),
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 13,
-                                color: Colors.white,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                game?.status == 'waiting'
+                                    ? 'Waiting...'
+                                    : iAmFinished
+                                    ? 'YOU FINISHED #$myPlacement'
+                                    : c.isVisualMyTurn
+                                    ? 'YOUR TURN!'
+                                    : c.getPlayerDisplayTitle(currentTurnId),
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 13,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
-                          ),
-                          if (game?.status == 'playing' && !iAmFinished) ...[
-                            const SizedBox(width: 7),
-                            _CountdownBadge(
-                              seconds: seconds,
-                              automated: currentIsAutomated,
-                            ),
+                            if (game?.status == 'playing' &&
+                                !iAmFinished &&
+                                !c.isDicePresentationActive &&
+                                c.visualActiveMove == null) ...[
+                              const SizedBox(width: 7),
+                              _CountdownBadge(
+                                seconds: seconds,
+                                automated: currentIsAutomated,
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _subtitle(
-                          controller: c,
-                          game: game,
-                          iAmFinished: iAmFinished,
-                          currentIsAutomated: currentIsAutomated,
-                          rollingPlayerName: rollingPlayerName,
-                          seconds: seconds,
                         ),
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white.withOpacity(0.5),
-                          fontWeight: FontWeight.bold,
+                        const SizedBox(height: 2),
+                        Text(
+                          _subtitle(
+                            controller: c,
+                            game: game,
+                            iAmFinished: iAmFinished,
+                            currentIsAutomated: currentIsAutomated,
+                            rollingPlayerName: rollingPlayerName,
+                            seconds: seconds,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.white.withOpacity(0.5),
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
                     ),
                   ),
                 ),
@@ -140,7 +143,7 @@ class TurnStatusCard extends StatelessWidget {
           GestureDetector(
             onTap: c.canRoll ? () => c.rollDice(cheatDiceValue) : null,
             child: RollingDiceUI(
-              value: game?.diceValue ?? 0,
+              value: c.visualDiceValue ?? game?.diceValue ?? 0,
               isRolling: c.isDiceRolling,
               size: 42,
             ),
@@ -159,15 +162,29 @@ class TurnStatusCard extends StatelessWidget {
     required int seconds,
   }) {
     if (controller.isDiceRolling) {
-      return controller.isMyTurn
+      return controller.isVisualMyTurn
           ? 'Rolling the dice...'
           : '$rollingPlayerName is rolling...';
+    }
+    if (controller.isShowingDiceResult) {
+      final result = controller.visualDiceValue ?? game?.diceValue ?? 0;
+      return controller.isVisualMyTurn
+          ? 'You rolled $result'
+          : '$rollingPlayerName rolled $result';
+    }
+    if (controller.visualActiveMove != null) {
+      final movingName = controller.getPlayerDisplayTitle(
+        controller.visualActiveMove!.playerId,
+      );
+      return controller.isVisualMyTurn
+          ? 'Moving your piece...'
+          : '$movingName is moving...';
     }
     if (iAmFinished) return 'Waiting for the remaining players...';
     if (currentIsAutomated) {
       return 'AI is playing for ${controller.getPlayerDisplayTitle(game?.currentTurn ?? '')}';
     }
-    if (controller.isMyTurn) {
+    if (controller.isVisualMyTurn) {
       return game?.turnPhase == LudoGame.waitingForMove
           ? 'Select a piece within ${seconds}s'
           : 'Roll within ${seconds}s';
@@ -183,10 +200,7 @@ class _CountdownBadge extends StatelessWidget {
   final int seconds;
   final bool automated;
 
-  const _CountdownBadge({
-    required this.seconds,
-    required this.automated,
-  });
+  const _CountdownBadge({required this.seconds, required this.automated});
 
   @override
   Widget build(BuildContext context) {

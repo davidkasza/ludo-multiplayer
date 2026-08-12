@@ -15,7 +15,7 @@ mixin LudoBotMixin on ChangeNotifier {
   String get gameId;
   LudoGame? get game;
   ActiveMove? get visualActiveMove;
-  bool get isDiceRolling;
+  bool get isDicePresentationActive;
   DateTime get estimatedServerNow;
 
   String get statusMessage;
@@ -51,7 +51,7 @@ mixin LudoBotMixin on ChangeNotifier {
         currentGame.currentTurn.isEmpty ||
         currentGame.finishOrder.contains(currentGame.currentTurn) ||
         visualActiveMove != null ||
-        isDiceRolling) {
+        isDicePresentationActive) {
       _cancelScheduledAutomation();
       return;
     }

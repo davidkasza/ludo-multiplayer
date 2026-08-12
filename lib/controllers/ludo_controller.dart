@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import '../config/progression_config.dart';
 import '../game/classic_board.dart';
 import '../game/ludo_palette.dart';
+import '../game/ludo_presentation.dart';
 import '../models/ludo_models.dart';
 import 'mixins/ludo_auth_mixin.dart';
 import 'mixins/ludo_google_auth_mixin.dart';
@@ -72,8 +73,10 @@ class LudoController extends ChangeNotifier
 
   bool isDiceRolling = false;
   String? diceRollingPlayerId;
+  int? visualDiceValue;
 
   Timer? _diceRollAnimationTimer;
+  Timer? _diceResultHoldTimer;
   String? _lastSeenDiceRollKey;
   String? _animatingDiceRollKey;
 
@@ -181,48 +184,85 @@ class LudoController extends ChangeNotifier
 
     _lastSeenDiceRollKey = key;
     _diceRollAnimationTimer?.cancel();
+    _diceResultHoldTimer?.cancel();
     _animatingDiceRollKey = key;
     diceRollingPlayerId = remoteRoll.playerId;
-    isDiceRolling = true;
-    notifyListeners();
+    visualDiceValue = remoteRoll.result >= 1 && remoteRoll.result <= 6
+        ? remoteRoll.result
+        : null;
 
     final committedAt = remoteRoll.committedAt?.toDate();
     final elapsedMs = committedAt == null
         ? 0
         : estimatedServerNow.difference(committedAt).inMilliseconds;
-    final remainingMs = (remoteRoll.durationMs - elapsedMs)
-        .clamp(0, remoteRoll.durationMs)
-        .toInt();
-    if (remainingMs == 0) {
-      _diceRollAnimationTimer = null;
-      _animatingDiceRollKey = null;
-      diceRollingPlayerId = null;
-      isDiceRolling = false;
-      notifyListeners();
-      syncBotTurn();
-      return;
+    final frame = LudoPresentation.diceFrame(
+      elapsedMs: elapsedMs,
+      rollDurationMs: remoteRoll.durationMs,
+    );
+
+    switch (frame.phase) {
+      case DicePresentationPhase.rolling:
+        isDiceRolling = true;
+        notifyListeners();
+        _diceRollAnimationTimer = Timer(
+          Duration(milliseconds: frame.remainingMs),
+          () => _showDiceResult(key),
+        );
+        return;
+      case DicePresentationPhase.result:
+        isDiceRolling = false;
+        notifyListeners();
+        _scheduleDicePresentationClear(key, frame.remainingMs);
+        return;
+      case DicePresentationPhase.complete:
+        _completeDicePresentation(key);
+        return;
     }
+  }
 
-    _diceRollAnimationTimer = Timer(Duration(milliseconds: remainingMs), () {
-      if (_animatingDiceRollKey != key) return;
+  void _showDiceResult(String key) {
+    if (_animatingDiceRollKey != key) return;
 
-      _diceRollAnimationTimer = null;
-      _animatingDiceRollKey = null;
-      diceRollingPlayerId = null;
-      isDiceRolling = false;
-      notifyListeners();
-      syncBotTurn();
-    });
+    _diceRollAnimationTimer = null;
+    isDiceRolling = false;
+    notifyListeners();
+    _scheduleDicePresentationClear(key, LudoPresentation.diceResultHoldMs);
+  }
+
+  void _scheduleDicePresentationClear(String key, int remainingMs) {
+    _diceResultHoldTimer?.cancel();
+    _diceResultHoldTimer = Timer(
+      Duration(milliseconds: remainingMs),
+      () => _completeDicePresentation(key),
+    );
+  }
+
+  void _completeDicePresentation(String key) {
+    if (_animatingDiceRollKey != key) return;
+
+    _diceRollAnimationTimer?.cancel();
+    _diceResultHoldTimer?.cancel();
+    _diceRollAnimationTimer = null;
+    _diceResultHoldTimer = null;
+    _animatingDiceRollKey = null;
+    diceRollingPlayerId = null;
+    visualDiceValue = null;
+    isDiceRolling = false;
+    notifyListeners();
+    syncBotTurn();
   }
 
   void stopDiceRollAnimation() {
-    final hadAnimation = isDiceRolling || diceRollingPlayerId != null;
+    final hadAnimation = isDicePresentationActive;
 
     _diceRollAnimationTimer?.cancel();
+    _diceResultHoldTimer?.cancel();
     _diceRollAnimationTimer = null;
+    _diceResultHoldTimer = null;
     _lastSeenDiceRollKey = null;
     _animatingDiceRollKey = null;
     diceRollingPlayerId = null;
+    visualDiceValue = null;
     isDiceRolling = false;
 
     if (hadAnimation) notifyListeners();
@@ -282,6 +322,7 @@ class LudoController extends ChangeNotifier
     gameSubscription?.cancel();
     _visualActiveMoveClearTimer?.cancel();
     _diceRollAnimationTimer?.cancel();
+    _diceResultHoldTimer?.cancel();
     _turnClockTimer?.cancel();
     stopPresenceTracking();
     stopRoomHeartbeat();
@@ -313,12 +354,42 @@ class LudoController extends ChangeNotifier
         !currentGame.aiControlledPlayers.contains(currentUserId);
   }
 
+  bool get isDicePresentationActive => diceRollingPlayerId != null;
+
+  bool get isShowingDiceResult => isDicePresentationActive && !isDiceRolling;
+
+  String get visualTurnPlayerId => LudoPresentation.visualTurnPlayerId(
+    authoritativeTurnPlayerId: game?.currentTurn ?? '',
+    dicePlayerId: diceRollingPlayerId,
+    movingPlayerId: visualActiveMove?.playerId,
+  );
+
+  bool get isVisualMyTurn => user != null && visualTurnPlayerId == user!.uid;
+
+  bool isPlayerVisuallyFinished(String playerId) {
+    return LudoPresentation.isVisuallyFinished(
+      authoritativelyFinished: game?.finishOrder.contains(playerId) == true,
+      playerId: playerId,
+      movingPlayerId: visualActiveMove?.playerId,
+    );
+  }
+
+  bool get shouldShowEndGame => LudoPresentation.shouldShowEndGame(
+    authoritativeMatchFinished: game?.status == 'finished',
+    hasActiveMovePresentation: visualActiveMove != null,
+    hasActiveDicePresentation: isDicePresentationActive,
+  );
+
+  bool get shouldShowGameScreen =>
+      game?.status == 'playing' ||
+      (game?.status == 'finished' && !shouldShowEndGame);
+
   bool get canRoll {
     return isMyTurn &&
         game != null &&
         !game!.hasRolled &&
         game!.status == 'playing' &&
-        !isDiceRolling &&
+        !isDicePresentationActive &&
         visualActiveMove == null;
   }
 

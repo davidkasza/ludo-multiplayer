@@ -217,7 +217,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
           );
         }
 
-        if (game?.status == 'finished') {
+        if (_controller.shouldShowEndGame) {
           return EndGame(
             controller: _controller,
             onQuit: () {
@@ -235,7 +235,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
           );
         }
 
-        if (game != null && game.status == 'playing') {
+        if (game != null && _controller.shouldShowGameScreen) {
           return GameScreen(
             controller: _controller,
             cheatDiceValue: cheatDiceValue,
