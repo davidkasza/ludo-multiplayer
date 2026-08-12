@@ -129,7 +129,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   }
 
   void _showChatIfNeeded() {
-    final chat = _controller.game?.activeChat;
+    final chat = _controller.realtimeChat ?? _controller.game?.activeChat;
     if (chat == null ||
         chat.message.isEmpty ||
         chat.timestamp == lastChatTimestamp) {
@@ -145,7 +145,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Ã°Å¸â€™Â¬ $senderName: ${chat.message}',
+          '💬 $senderName: ${chat.message}',
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontWeight: FontWeight.bold,
@@ -210,6 +210,12 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
       animation: _controller,
       builder: (context, child) {
         final game = _controller.game;
+
+        if (!_controller.profileLoaded || !_controller.activeGameChecked) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
 
         if (game?.status == 'finished') {
           return EndGame(

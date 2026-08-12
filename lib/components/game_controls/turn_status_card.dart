@@ -79,7 +79,9 @@ class TurnStatusCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Flexible(
-                  child: Column(
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: c.turnSecondsNotifier,
+                    builder: (context, seconds, child) => Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
@@ -104,7 +106,7 @@ class TurnStatusCard extends StatelessWidget {
                           if (game?.status == 'playing' && !iAmFinished) ...[
                             const SizedBox(width: 7),
                             _CountdownBadge(
-                              seconds: c.turnSecondsRemaining,
+                              seconds: seconds,
                               automated: currentIsAutomated,
                             ),
                           ],
@@ -118,6 +120,7 @@ class TurnStatusCard extends StatelessWidget {
                           iAmFinished: iAmFinished,
                           currentIsAutomated: currentIsAutomated,
                           rollingPlayerName: rollingPlayerName,
+                          seconds: seconds,
                         ),
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -127,6 +130,7 @@ class TurnStatusCard extends StatelessWidget {
                         ),
                       ),
                     ],
+                    ),
                   ),
                 ),
               ],
@@ -152,6 +156,7 @@ class TurnStatusCard extends StatelessWidget {
     required bool iAmFinished,
     required bool currentIsAutomated,
     required String rollingPlayerName,
+    required int seconds,
   }) {
     if (controller.isDiceRolling) {
       return controller.isMyTurn
@@ -164,8 +169,8 @@ class TurnStatusCard extends StatelessWidget {
     }
     if (controller.isMyTurn) {
       return game?.turnPhase == LudoGame.waitingForMove
-          ? 'Select a piece within ${controller.turnSecondsRemaining}s'
-          : 'Roll within ${controller.turnSecondsRemaining}s';
+          ? 'Select a piece within ${seconds}s'
+          : 'Roll within ${seconds}s';
     }
     if (game?.turnPhase == LudoGame.waitingForMove) {
       return 'Waiting for a piece selection...';

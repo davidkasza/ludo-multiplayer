@@ -10,20 +10,9 @@ class LudoBoardMapper {
   static Offset? getPieceCanvasCoords({
     required LudoPiece piece,
     required int playerIndex,
-    required bool isCurrentPlayer,
-    required bool isMyTurn,
-    LocalMovingPiece? localMovingPiece,
   }) {
     int visualPos = piece.pos;
     bool inHome = piece.inHome;
-
-    if (isMyTurn &&
-        isCurrentPlayer &&
-        localMovingPiece != null &&
-        localMovingPiece.id == piece.id) {
-      visualPos = localMovingPiece.currentVisualPos;
-      inHome = localMovingPiece.inHome;
-    }
 
     const double step = ClassicBoard.step;
     const double offset = ClassicBoard.offset;

@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 
 import '../config/progression_config.dart';
@@ -36,7 +38,12 @@ class LudoController extends ChangeNotifier
         LudoBotMixin {
   final FirebaseAuth auth = FirebaseAuth.instance;
   final FirebaseFirestore db = FirebaseFirestore.instance;
-  final Random random = Random();
+  final FirebaseDatabase realtimeDb = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL:
+        'https://ludo-app-569c2-default-rtdb.europe-west1.firebasedatabase.app',
+  );
+  final Random random = Random.secure();
 
   User? user;
   String gameId = '';
@@ -59,7 +66,7 @@ class LudoController extends ChangeNotifier
 
   String localConnectionState = PlayerPresence.online;
 
-  int turnSecondsRemaining = 0;
+  final ValueNotifier<int> turnSecondsNotifier = ValueNotifier<int>(0);
   Timer? _turnClockTimer;
   String? _turnClockKey;
 
@@ -72,7 +79,6 @@ class LudoController extends ChangeNotifier
 
   final ValueNotifier<double> hopFrameNotifier = ValueNotifier<double>(0.0);
 
-  LocalMovingPiece? localMovingPiece;
   Timer? hopTimer;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? gameSubscription;
 
@@ -81,24 +87,8 @@ class LudoController extends ChangeNotifier
   int _visualActiveMoveStartedLocallyAt = 0;
   Timer? _visualActiveMoveClearTimer;
 
-  final List<int> globalSafePlaces = const [
-    3,
-    8,
-    11,
-    16,
-    21,
-    24,
-    29,
-    34,
-    37,
-    42,
-    47,
-    50,
-  ];
-
   LudoController() {
     unawaited(_initialize());
-    startHopAnimation();
   }
 
   Future<void> _initialize() async {
@@ -110,6 +100,7 @@ class LudoController extends ChangeNotifier
       await loadMyProfile();
     } else {
       profileLoaded = true;
+      activeGameChecked = true;
       notifyListeners();
     }
   }
@@ -122,52 +113,66 @@ class LudoController extends ChangeNotifier
   }
 
   void syncVisualActiveMove(ActiveMove? remoteMove) {
-    final remoteKey = remoteMove == null
-        ? null
-        : '${remoteMove.playerId}_${remoteMove.pieceId}_${remoteMove.startedAt}';
+    final remoteKey = remoteMove?.key;
 
     if (remoteMove != null) {
-      _visualActiveMoveClearTimer?.cancel();
-      _visualActiveMoveClearTimer = null;
-
       if (_visualActiveMoveKey != remoteKey) {
-        visualActiveMove = remoteMove;
+        _visualActiveMoveClearTimer?.cancel();
         _visualActiveMoveKey = remoteKey;
+        final committedAt = remoteMove.committedAt?.toDate();
+        final elapsedMs = committedAt == null
+            ? 0
+            : estimatedServerNow.difference(committedAt).inMilliseconds;
+        final visualElapsedMs = elapsedMs
+            .clamp(0, remoteMove.totalDurationMs)
+            .toInt();
+        final remainingMs = (remoteMove.totalDurationMs - visualElapsedMs)
+            .clamp(0, remoteMove.totalDurationMs)
+            .toInt();
+        if (remainingMs == 0) {
+          _visualActiveMoveClearTimer = null;
+          visualActiveMove = null;
+          hopTimer?.cancel();
+          hopTimer = null;
+          notifyListeners();
+          syncBotTurn();
+          return;
+        }
+        visualActiveMove = remoteMove;
         _visualActiveMoveStartedLocallyAt =
-            DateTime.now().millisecondsSinceEpoch;
+            DateTime.now().millisecondsSinceEpoch - visualElapsedMs;
+        startHopAnimation();
+        _visualActiveMoveClearTimer = Timer(
+          Duration(milliseconds: remainingMs + 120),
+          _clearVisualActiveMove,
+        );
+        notifyListeners();
       }
-
       return;
     }
 
-    if (visualActiveMove == null) return;
-    if (_visualActiveMoveClearTimer != null) return;
-
-    final remainingMs = visualActiveMove!.totalDurationMs - visualMoveElapsedMs;
-
-    if (remainingMs <= 0) {
-      _clearVisualActiveMove();
-      return;
-    }
-
-    _visualActiveMoveClearTimer = Timer(
-      Duration(milliseconds: remainingMs + 120),
-      _clearVisualActiveMove,
-    );
+    _visualActiveMoveKey = null;
+    if (visualActiveMove != null) _clearVisualActiveMove();
   }
 
   void _clearVisualActiveMove() {
     _visualActiveMoveClearTimer?.cancel();
     _visualActiveMoveClearTimer = null;
     visualActiveMove = null;
-    _visualActiveMoveKey = null;
     _visualActiveMoveStartedLocallyAt = 0;
+    hopTimer?.cancel();
+    hopTimer = null;
     notifyListeners();
+    syncBotTurn();
   }
 
   void syncDiceRollAnimation(ActiveDiceRoll? remoteRoll) {
     if (remoteRoll == null) {
-      _lastSeenDiceRollKey = null;
+      if (isDiceRolling || diceRollingPlayerId != null) {
+        stopDiceRollAnimation();
+      } else {
+        _lastSeenDiceRollKey = null;
+      }
       return;
     }
 
@@ -181,18 +186,33 @@ class LudoController extends ChangeNotifier
     isDiceRolling = true;
     notifyListeners();
 
-    _diceRollAnimationTimer = Timer(
-      Duration(milliseconds: remoteRoll.durationMs),
-          () {
-        if (_animatingDiceRollKey != key) return;
+    final committedAt = remoteRoll.committedAt?.toDate();
+    final elapsedMs = committedAt == null
+        ? 0
+        : estimatedServerNow.difference(committedAt).inMilliseconds;
+    final remainingMs = (remoteRoll.durationMs - elapsedMs)
+        .clamp(0, remoteRoll.durationMs)
+        .toInt();
+    if (remainingMs == 0) {
+      _diceRollAnimationTimer = null;
+      _animatingDiceRollKey = null;
+      diceRollingPlayerId = null;
+      isDiceRolling = false;
+      notifyListeners();
+      syncBotTurn();
+      return;
+    }
 
-        _diceRollAnimationTimer = null;
-        _animatingDiceRollKey = null;
-        diceRollingPlayerId = null;
-        isDiceRolling = false;
-        notifyListeners();
-      },
-    );
+    _diceRollAnimationTimer = Timer(Duration(milliseconds: remainingMs), () {
+      if (_animatingDiceRollKey != key) return;
+
+      _diceRollAnimationTimer = null;
+      _animatingDiceRollKey = null;
+      diceRollingPlayerId = null;
+      isDiceRolling = false;
+      notifyListeners();
+      syncBotTurn();
+    });
   }
 
   void stopDiceRollAnimation() {
@@ -210,39 +230,26 @@ class LudoController extends ChangeNotifier
 
   void syncTurnClock() {
     final currentGame = game;
-    final deadline = currentGame?.turnDeadlineAt;
+    final deadline = currentGame?.effectiveTurnDeadline;
     final key = currentGame == null || deadline == null
         ? null
-        : '${currentGame.turnVersion}_${deadline.toDate().millisecondsSinceEpoch}';
+        : '${currentGame.turnVersion}_${deadline.millisecondsSinceEpoch}';
 
     if (key == null || currentGame?.status != 'playing') {
       _turnClockTimer?.cancel();
       _turnClockTimer = null;
       _turnClockKey = null;
-      if (turnSecondsRemaining != 0) {
-        turnSecondsRemaining = 0;
-        notifyListeners();
-      }
+      if (turnSecondsNotifier.value != 0) turnSecondsNotifier.value = 0;
       return;
     }
-    final currentDeadline = deadline;
-
-    if (currentDeadline == null) {
-      turnSecondsRemaining = 0;
-      notifyListeners();
-      return;
-    }
+    final currentDeadline = deadline!;
 
     void updateRemaining() {
       final milliseconds = currentDeadline
-          .toDate()
-          .difference(DateTime.now())
+          .difference(estimatedServerNow)
           .inMilliseconds;
-
-      turnSecondsRemaining =
-      milliseconds <= 0 ? 0 : (milliseconds / 1000).ceil();
-
-      notifyListeners();
+      final next = milliseconds <= 0 ? 0 : (milliseconds / 1000).ceil();
+      if (turnSecondsNotifier.value != next) turnSecondsNotifier.value = next;
     }
 
     updateRemaining();
@@ -251,15 +258,19 @@ class LudoController extends ChangeNotifier
     _turnClockTimer?.cancel();
     _turnClockKey = key;
     _turnClockTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
-          (_) => updateRemaining(),
+      const Duration(seconds: 1),
+      (_) => updateRemaining(),
     );
   }
 
   void startHopAnimation() {
+    if (hopTimer?.isActive == true) return;
     hopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
-      if (localMovingPiece != null || visualActiveMove != null) {
+      if (visualActiveMove != null) {
         hopFrameNotifier.value += 0.2;
+      } else {
+        timer.cancel();
+        hopTimer = null;
       }
     });
   }
@@ -274,8 +285,10 @@ class LudoController extends ChangeNotifier
     _turnClockTimer?.cancel();
     stopPresenceTracking();
     stopRoomHeartbeat();
+    stopChatTracking();
     cancelBotTurn();
     hopFrameNotifier.dispose();
+    turnSecondsNotifier.dispose();
     super.dispose();
   }
 
@@ -306,8 +319,6 @@ class LudoController extends ChangeNotifier
         !game!.hasRolled &&
         game!.status == 'playing' &&
         !isDiceRolling &&
-        game!.activeDiceRoll == null &&
-        game!.activeMove == null &&
         visualActiveMove == null;
   }
 
@@ -356,27 +367,6 @@ class LudoController extends ChangeNotifier
     return getPiecesForPlayer(user!.uid);
   }
 
-  String getNextPlayerId(String currentPlayerId) {
-    final currentGame = game;
-    final players = currentGame?.players ?? const <String>[];
-    if (players.isEmpty) return currentPlayerId;
-
-    final finishedPlayers = currentGame?.finishOrder.toSet() ?? <String>{};
-    final currentIndex = players.indexOf(currentPlayerId);
-    final startIndex = currentIndex < 0 ? -1 : currentIndex;
-
-    for (int offset = 1; offset <= players.length; offset++) {
-      final candidate = players[(startIndex + offset) % players.length];
-      if (!finishedPlayers.contains(candidate)) return candidate;
-    }
-
-    return currentPlayerId;
-  }
-
-  int getStartOffsetForIndex(int playerIndex) {
-    return ClassicBoard.startOffsetForSeat(playerIndex);
-  }
-
   int getGlobalPathIndexForIndex(int playerIndex, int relativePos) {
     return ClassicBoard.globalPathIndexForSeat(playerIndex, relativePos);
   }
@@ -408,11 +398,7 @@ class LudoController extends ChangeNotifier
   List<Map<String, dynamic>> createDefaultPieces(int initialPos) {
     return List.generate(
       4,
-          (i) => LudoPiece(
-        id: i + 1,
-        pos: initialPos,
-        inHome: false,
-      ).toMap(),
+      (i) => LudoPiece(id: i + 1, pos: initialPos, inHome: false).toMap(),
     );
   }
 }

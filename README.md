@@ -1,17 +1,28 @@
-# ludo_game
+# Ludo Game
 
-A new Flutter project.
+A Flutter/Firebase multiplayer Ludo game with two-to-four seats, human and AI
+players, public matchmaking, private room codes, reconnect/takeover support,
+quick chat, profiles, progression, and match history.
 
-## Getting Started
+## Local checks
 
-This project is a starting point for a Flutter application.
+```sh
+flutter pub get
+flutter analyze
+flutter test
+```
 
-A few resources to get you started if this is your first Flutter project:
+Both deployment workflows run analysis and tests before building. Deployment is
+still triggered only by the repository's existing `main`-branch workflows.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Firebase setup
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+The app keeps durable profiles, room snapshots, progression, and match results
+in Cloud Firestore. Ephemeral session presence and quick chat use Firebase
+Realtime Database so they do not repeatedly invalidate the full game snapshot.
+
+Before using multiplayer, follow
+[`docs/firebase_architecture.md`](docs/firebase_architecture.md). In particular,
+enable the project's default Realtime Database instance and review/deploy the
+checked-in Firestore/Realtime Database rules and Firestore indexes. Nothing in
+this repository change deploys or enables a Firebase service automatically.

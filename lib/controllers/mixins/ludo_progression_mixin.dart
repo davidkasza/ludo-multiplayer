@@ -89,10 +89,12 @@ mixin LudoProgressionMixin on ChangeNotifier {
       final map = snapshot.data();
       if (!snapshot.exists || map == null) return null;
 
-      final participants = List<String>.from(
-        map['participantIds'] ?? const <String>[],
-      );
-      final ranking = List<String>.from(map['ranking'] ?? const <String>[]);
+      final participants = map['participantIds'] is Iterable
+          ? (map['participantIds'] as Iterable).whereType<String>().toList()
+          : <String>[];
+      final ranking = map['ranking'] is Iterable
+          ? (map['ranking'] as Iterable).whereType<String>().toList()
+          : <String>[];
       if (!participants.contains(currentUser.uid)) return null;
 
       final placementIndex = ranking.indexOf(currentUser.uid);

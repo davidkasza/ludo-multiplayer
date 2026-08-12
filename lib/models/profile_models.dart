@@ -1,5 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+String _string(Object? value, [String fallback = '']) =>
+    value is String ? value : fallback;
+
+int _integer(Object? value) => value is num ? value.toInt() : 0;
+
+List<String> _strings(Object? value) => value is Iterable
+    ? value.whereType<String>().toList(growable: false)
+    : const <String>[];
+
 class PlayerProfile {
   final String uid;
   final String displayName;
@@ -30,14 +39,16 @@ class PlayerProfile {
   factory PlayerProfile.fromMap(String uid, Map<String, dynamic> map) {
     return PlayerProfile(
       uid: uid,
-      displayName: map['displayName'] as String? ?? '',
-      isAnonymous: map['isAnonymous'] as bool? ?? true,
-      activeGameId: map['activeGameId'] as String? ?? '',
-      xp: (map['xp'] as num?)?.toInt() ?? 0,
-      coins: (map['coins'] as num?)?.toInt() ?? 0,
-      rewardedMatches: (map['rewardedMatches'] as num?)?.toInt() ?? 0,
-      rewardedWins: (map['rewardedWins'] as num?)?.toInt() ?? 0,
-      rewardedPodiums: (map['rewardedPodiums'] as num?)?.toInt() ?? 0,
+      displayName: _string(map['displayName']),
+      isAnonymous: map['isAnonymous'] is bool
+          ? map['isAnonymous'] as bool
+          : true,
+      activeGameId: _string(map['activeGameId']),
+      xp: _integer(map['xp']).clamp(0, 1 << 31).toInt(),
+      coins: _integer(map['coins']).clamp(0, 1 << 31).toInt(),
+      rewardedMatches: _integer(map['rewardedMatches']).clamp(0, 1 << 31).toInt(),
+      rewardedWins: _integer(map['rewardedWins']).clamp(0, 1 << 31).toInt(),
+      rewardedPodiums: _integer(map['rewardedPodiums']).clamp(0, 1 << 31).toInt(),
       createdAt: map['createdAt'] is Timestamp
           ? map['createdAt'] as Timestamp
           : null,
@@ -88,13 +99,13 @@ class MatchHistoryEntry {
 
     return MatchHistoryEntry(
       id: document.id,
-      participantIds: List<String>.from(map['participantIds'] ?? const []),
-      ranking: List<String>.from(map['ranking'] ?? const []),
+      participantIds: _strings(map['participantIds']),
+      ranking: _strings(map['ranking']),
       playerNames: names,
-      boardId: map['boardId'] as String? ?? 'classic',
-      playerCount: map['playerCount'] as int? ?? 0,
-      humanPlayerCount: map['humanPlayerCount'] as int? ?? 0,
-      botPlayerCount: map['botPlayerCount'] as int? ?? 0,
+      boardId: _string(map['boardId'], 'classic'),
+      playerCount: _integer(map['playerCount']).clamp(0, 4).toInt(),
+      humanPlayerCount: _integer(map['humanPlayerCount']).clamp(0, 4).toInt(),
+      botPlayerCount: _integer(map['botPlayerCount']).clamp(0, 4).toInt(),
       startedAt: map['startedAt'] is Timestamp
           ? map['startedAt'] as Timestamp
           : null,

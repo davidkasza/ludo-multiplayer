@@ -212,7 +212,7 @@ class _MatchSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final duration = game.matchDuration;
-    final boardName = game.boardId == 'classic' ? 'Classic' : 'Circular';
+    const boardName = 'Classic';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),

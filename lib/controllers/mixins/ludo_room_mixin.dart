@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../config/progression_config.dart';
 import '../../game/ludo_palette.dart';
+import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
 
 mixin LudoRoomMixin on ChangeNotifier {
@@ -26,8 +27,8 @@ mixin LudoRoomMixin on ChangeNotifier {
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   get gameSubscription;
   set gameSubscription(
-      StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? value,
-      );
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? value,
+  );
 
   bool get isHost;
 
@@ -40,6 +41,8 @@ mixin LudoRoomMixin on ChangeNotifier {
   void syncTurnClock();
   void startPresenceTracking();
   void stopPresenceTracking();
+  void startChatTracking(String roomId);
+  void stopChatTracking();
   void noteConnectionError();
   void noteConnectionRestored();
   Future<void> markPresenceOnline();
@@ -47,13 +50,14 @@ mixin LudoRoomMixin on ChangeNotifier {
   Future<void> markPresenceOffline({String? roomId});
 
   Future<ProgressionReward?> claimProgressionForGame(
-      String matchId,
-      LudoGame game,
-      );
+    String matchId,
+    LudoGame game,
+  );
   Future<ProgressionReward?> claimProgressionFromResult(String matchId);
 
   String get localConnectionState;
   set localConnectionState(String value);
+  DateTime get estimatedServerNow;
 
   String get activeGameId;
   set activeGameId(String value);
@@ -65,51 +69,58 @@ mixin LudoRoomMixin on ChangeNotifier {
   Future<void> refreshResumableGame();
   Future<bool> markMyselfForfeit();
 
-  static const String _roomCodeChars =
-      'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  static const String _roomCodeChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-  static const Duration waitingRoomLease = Duration(minutes: 2);
+  static const Duration waitingRoomLease = Duration(minutes: 12);
   static const Duration activeGameLease = Duration(hours: 24);
-  static const Duration _heartbeatInterval = Duration(seconds: 30);
+  static const Duration _heartbeatInterval = Duration(minutes: 5);
 
   Timer? _roomHeartbeatTimer;
   String? _heartbeatRoomId;
+  int _listenerGeneration = 0;
+  Timer? _legacyRecoveryTimer;
+  String? _legacyRecoveryKey;
+
+  List<String> _stringList(Object? value) =>
+      value is Iterable ? value.whereType<String>().toList() : <String>[];
+
+  int _integer(Object? value, int fallback) =>
+      value is num ? value.toInt() : fallback;
+
+  String _string(Object? value, [String fallback = '']) =>
+      value is String ? value : fallback;
+
+  Map<String, dynamic> _dynamicMap(Object? value) =>
+      value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
 
   Timestamp _expiresAfter(Duration duration) {
-    return Timestamp.fromDate(
-      DateTime.now().toUtc().add(duration),
-    );
+    return Timestamp.fromDate(estimatedServerNow.toUtc().add(duration));
   }
 
   bool _hasActiveWaitingLease(Map<String, dynamic> data) {
     final rawExpiresAt = data['expiresAt'];
     if (rawExpiresAt is! Timestamp) return false;
 
-    return rawExpiresAt.toDate().toUtc().isAfter(DateTime.now().toUtc());
+    return rawExpiresAt.toDate().toUtc().isAfter(estimatedServerNow.toUtc());
   }
 
   void syncRoomHeartbeat() {
-    final shouldRun = gameId.isNotEmpty &&
-        game?.status == 'waiting' &&
-        isHost;
+    final shouldRun = gameId.isNotEmpty && game?.status == 'waiting' && isHost;
 
     if (!shouldRun) {
       stopRoomHeartbeat();
       return;
     }
 
-    if (_heartbeatRoomId == gameId &&
-        _roomHeartbeatTimer?.isActive == true) {
+    if (_heartbeatRoomId == gameId && _roomHeartbeatTimer?.isActive == true) {
       return;
     }
 
     stopRoomHeartbeat();
     _heartbeatRoomId = gameId;
-    unawaited(_refreshWaitingRoomLease());
-
     _roomHeartbeatTimer = Timer.periodic(
       _heartbeatInterval,
-          (_) => unawaited(_refreshWaitingRoomLease()),
+      (_) => unawaited(_refreshWaitingRoomLease()),
     );
   }
 
@@ -132,9 +143,17 @@ mixin LudoRoomMixin on ChangeNotifier {
     }
 
     try {
-      await db.collection('games').doc(currentId).update({
-        'lastActivityAt': FieldValue.serverTimestamp(),
-        'expiresAt': _expiresAfter(waitingRoomLease),
+      final reference = db.collection('games').doc(currentId);
+      await db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(reference);
+        final data = snapshot.data();
+        if (!snapshot.exists || data == null) return;
+        final latest = LudoGame.fromMap(data);
+        if (latest.status != 'waiting' || latest.hostUid != user?.uid) return;
+        transaction.update(reference, {
+          'lastActivityAt': FieldValue.serverTimestamp(),
+          'expiresAt': _expiresAfter(waitingRoomLease),
+        });
       });
     } catch (error) {
       if (kDebugMode) {
@@ -148,7 +167,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     return List.generate(
       5,
-          (_) => _roomCodeChars[secureRandom.nextInt(_roomCodeChars.length)],
+      (_) => _roomCodeChars[secureRandom.nextInt(_roomCodeChars.length)],
     ).join();
   }
 
@@ -210,9 +229,11 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     if (result.isEmpty) {
       final layout = LudoGame.seatLayoutForMaxPlayers(maxPlayers);
-      for (int index = 0;
-      index < players.length && index < layout.length;
-      index++) {
+      for (
+        int index = 0;
+        index < players.length && index < layout.length;
+        index++
+      ) {
         result[players[index]] = layout[index];
       }
     }
@@ -227,8 +248,7 @@ mixin LudoRoomMixin on ChangeNotifier {
   }) {
     final layout = LudoGame.seatLayoutForMaxPlayers(maxPlayers);
     final orderBySeat = <int, int>{
-      for (int index = 0; index < layout.length; index++)
-        layout[index]: index,
+      for (int index = 0; index < layout.length; index++) layout[index]: index,
     };
 
     final sorted = playerIds.toList();
@@ -253,8 +273,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     int open = 0;
     for (final seat in LudoGame.seatLayoutForMaxPlayers(maxPlayers)) {
-      if (LudoGame.normalizeSeatType(seatTypes[seat]) ==
-          LudoGame.humanSeat &&
+      if (LudoGame.normalizeSeatType(seatTypes[seat]) == LudoGame.humanSeat &&
           !occupiedSeats.contains(seat)) {
         open++;
       }
@@ -263,8 +282,8 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   Future<String> _createGameWithUniqueRoomCode(
-      Map<String, dynamic> gameData,
-      ) async {
+    Map<String, dynamic> gameData,
+  ) async {
     for (int attempt = 0; attempt < 10; attempt++) {
       final roomCode = _generateRoomCode();
       final ref = db.collection('games').doc(roomCode);
@@ -285,51 +304,124 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   void listenGame(String id) {
-    gameSubscription?.cancel();
+    final generation = ++_listenerGeneration;
+    unawaited(gameSubscription?.cancel());
+    startChatTracking(id);
 
-    gameSubscription = db.collection('games').doc(id).snapshots().listen(
+    gameSubscription = db
+        .collection('games')
+        .doc(id)
+        .snapshots()
+        .listen(
           (snap) {
-        if (!snap.exists || snap.data() == null) {
-          if (gameId == id) {
-            unawaited(claimProgressionFromResult(id));
-            unawaited(clearMyActiveGame(expectedGameId: id));
-            _resetLocalGame(
-              message: 'The room no longer exists.',
-            );
+            if (generation != _listenerGeneration || gameId != id) return;
+            if (!snap.exists || snap.data() == null) {
+              if (gameId == id) {
+                unawaited(claimProgressionFromResult(id));
+                unawaited(clearMyActiveGame(expectedGameId: id));
+                _resetLocalGame(message: 'The room no longer exists.');
+              }
+              return;
+            }
+
+            LudoGame nextGame;
+            try {
+              nextGame = LudoGame.fromMap(snap.data()!);
+            } catch (error, stackTrace) {
+              debugPrint('Invalid game document $id: $error\n$stackTrace');
+              statusMessage =
+                  'The room data is invalid. Reconnecting safely...';
+              notifyListeners();
+              return;
+            }
+
+            final currentUserId = user?.uid;
+            if (currentUserId != null &&
+                !nextGame.players.contains(currentUserId)) {
+              unawaited(clearMyActiveGame(expectedGameId: id));
+              _resetLocalGame(message: 'You are no longer in this room.');
+              return;
+            }
+
+            syncVisualActiveMove(nextGame.activeMove);
+            game = nextGame;
+            noteConnectionRestored();
+            startPresenceTracking();
+            syncDiceRollAnimation(nextGame.activeDiceRoll);
+            syncTurnClock();
+            syncRoomHeartbeat();
+            _scheduleLegacyActionRecovery(id, nextGame);
+
+            if (nextGame.status == 'finished' &&
+                currentUserId != null &&
+                nextGame.players.contains(currentUserId)) {
+              unawaited(claimProgressionForGame(id, nextGame));
+              unawaited(clearMyActiveGame(expectedGameId: id));
+            } else if (nextGame.status == 'playing' &&
+                nextGame.effectiveTurnDeadline == null) {
+              unawaited(_ensureTurnStateInitialized(id));
+            }
+
+            notifyListeners();
+            syncBotTurn();
+          },
+          onError: (Object error) {
+            if (generation != _listenerGeneration || gameId != id) return;
+            noteConnectionError();
+            statusMessage = 'Connection lost. Reconnecting...';
+            notifyListeners();
+          },
+        );
+  }
+
+  void _scheduleLegacyActionRecovery(String roomId, LudoGame nextGame) {
+    if (nextGame.status != 'playing' ||
+        !LudoRules.needsLegacyActionRecovery(nextGame)) {
+      _legacyRecoveryTimer?.cancel();
+      _legacyRecoveryTimer = null;
+      _legacyRecoveryKey = null;
+      return;
+    }
+    final key = nextGame.activeMove?.key ?? nextGame.activeDiceRoll?.key;
+    if (key == null || _legacyRecoveryKey == key) return;
+    _legacyRecoveryTimer?.cancel();
+    _legacyRecoveryKey = key;
+    _legacyRecoveryTimer = Timer(const Duration(seconds: 3), () async {
+      final reference = db.collection('games').doc(roomId);
+      try {
+        await db.runTransaction((transaction) async {
+          final snapshot = await transaction.get(reference);
+          final data = snapshot.data();
+          if (!snapshot.exists || data == null) return;
+          final latest = LudoGame.fromMap(data);
+          final latestKey =
+              latest.activeMove?.key ?? latest.activeDiceRoll?.key;
+          if (latest.status != 'playing' ||
+              latestKey != key ||
+              !LudoRules.needsLegacyActionRecovery(latest)) {
+            return;
           }
-          return;
-        }
-
-        final nextGame = LudoGame.fromMap(snap.data()!);
-
-        syncVisualActiveMove(nextGame.activeMove);
-        game = nextGame;
-        noteConnectionRestored();
-        startPresenceTracking();
-        syncDiceRollAnimation(nextGame.activeDiceRoll);
-        syncTurnClock();
-        syncRoomHeartbeat();
-
-        final currentUserId = user?.uid;
-        if (nextGame.status == 'finished' &&
-            currentUserId != null &&
-            nextGame.players.contains(currentUserId)) {
-          unawaited(claimProgressionForGame(id, nextGame));
-          unawaited(clearMyActiveGame(expectedGameId: id));
-        } else if (nextGame.status == 'playing' &&
-            nextGame.turnDeadlineAt == null) {
-          unawaited(_ensureTurnStateInitialized(id));
-        }
-
-        notifyListeners();
-        syncBotTurn();
-      },
-      onError: (Object error) {
-        noteConnectionError();
-        statusMessage = 'Connection lost. Reconnecting...';
-        notifyListeners();
-      },
-    );
+          final seconds = latest.hasRolled ? 30 : 10;
+          transaction.update(reference, {
+            'activeMove': null,
+            'activeDiceRoll': null,
+            'automationLease': null,
+            'turnPhase': latest.hasRolled
+                ? LudoGame.waitingForMove
+                : LudoGame.waitingForRoll,
+            'turnStartedAt': FieldValue.serverTimestamp(),
+            'turnDurationSeconds': seconds,
+            'turnDeadlineAt': Timestamp.fromDate(
+              estimatedServerNow.add(Duration(seconds: seconds)),
+            ),
+            'turnVersion': latest.turnVersion + 1,
+            'lastActivityAt': FieldValue.serverTimestamp(),
+          });
+        });
+      } catch (error) {
+        debugPrint('Legacy action recovery failed: $error');
+      }
+    });
   }
 
   Future<void> _ensureTurnStateInitialized(String roomId) async {
@@ -341,19 +433,21 @@ mixin LudoRoomMixin on ChangeNotifier {
         if (!snapshot.exists || snapshot.data() == null) return;
 
         final latest = LudoGame.fromMap(snapshot.data()!);
-        if (latest.status != 'playing' || latest.turnDeadlineAt != null) return;
+        if (latest.status != 'playing' ||
+            latest.effectiveTurnDeadline != null) {
+          return;
+        }
 
         final waitingForMove = latest.hasRolled;
+        final seconds = waitingForMove ? 30 : 10;
         transaction.update(reference, {
           'turnPhase': waitingForMove
               ? LudoGame.waitingForMove
               : LudoGame.waitingForRoll,
+          'turnStartedAt': FieldValue.serverTimestamp(),
+          'turnDurationSeconds': seconds,
           'turnDeadlineAt': Timestamp.fromDate(
-            DateTime.now().toUtc().add(
-              waitingForMove
-                  ? const Duration(seconds: 30)
-                  : const Duration(seconds: 10),
-            ),
+            estimatedServerNow.toUtc().add(Duration(seconds: seconds)),
           ),
           'turnVersion': latest.turnVersion <= 0 ? 1 : latest.turnVersion,
           'aiControlledPlayers': latest.aiControlledPlayers,
@@ -369,16 +463,16 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   Future<void> createGame(
-      String playerName,
-      String selectedBoard,
-      bool isTestMode, {
-        int maxPlayers = 2,
-        String opponentType = LudoGame.humanOpponents,
-        Map<int, String>? seatTypes,
-        bool isPublic = true,
-      }) async {
+    String playerName,
+    String selectedBoard,
+    bool isTestMode, {
+    int maxPlayers = 2,
+    String opponentType = LudoGame.humanOpponents,
+    Map<int, String>? seatTypes,
+    bool isPublic = true,
+  }) async {
     if (user == null || playerName.trim().isEmpty) {
-      statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Please enter a nickname.';
+      statusMessage = '❌ Please enter a nickname.';
       notifyListeners();
       return;
     }
@@ -409,8 +503,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         final playerId = user!.uid;
         players.add(playerId);
         playerNames[playerId] = playerName.trim();
-        preferredColors[playerId] =
-            LudoPalette.defaultForSeat(physicalSeat);
+        preferredColors[playerId] = LudoPalette.defaultForSeat(physicalSeat);
         playerSeats[playerId] = physicalSeat;
         pieces[playerId] = createDefaultPieces(initialPos);
         continue;
@@ -433,9 +526,9 @@ mixin LudoRoomMixin on ChangeNotifier {
       playerSeats: playerSeats,
       playerIds: players,
     );
-    final hasHumanOpponentSeat = layout.skip(1).any(
-          (seat) => normalizedSeatTypes[seat] == LudoGame.humanSeat,
-    );
+    final hasHumanOpponentSeat = layout
+        .skip(1)
+        .any((seat) => normalizedSeatTypes[seat] == LudoGame.humanSeat);
     final effectivePublic = isPublic && hasHumanOpponentSeat;
 
     final gameData = <String, dynamic>{
@@ -453,7 +546,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       'finishOrder': const <String>[],
       'startedAt': null,
       'finishedAt': null,
-      'boardId': selectedBoard,
+      'boardId': 'classic',
       'isTestModeActive': isTestMode,
       'maxPlayers': safeMaxPlayers,
       'opponentType': LudoGame.deriveOpponentType(
@@ -476,19 +569,19 @@ mixin LudoRoomMixin on ChangeNotifier {
       'activeDiceRoll': null,
       'turnPhase': LudoGame.waitingForRoll,
       'turnDeadlineAt': null,
+      'turnStartedAt': null,
+      'turnDurationSeconds': 0,
       'turnVersion': 0,
+      'lastActionId': '',
+      'lastActionType': '',
       'aiControlledPlayers': const <String>[],
       'pendingReconnectPlayers': const <String>[],
       'forfeitedPlayers': const <String>[],
       'automationLease': null,
       'systemEvent': null,
-      'playerPresence': {
-        user!.uid: {
-          'state': PlayerPresence.online,
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'sessionId': '',
-        },
-      },
+      // Legacy clients may still read this map. New session presence lives in
+      // RTDB and deliberately does not invalidate the game snapshot.
+      'playerPresence': const <String, dynamic>{},
     };
 
     try {
@@ -498,7 +591,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       await setMyActiveGame(roomCode);
       listenGame(roomCode);
     } catch (error) {
-      statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Could not create the room.';
+      statusMessage = '❌ Could not create the room.';
       notifyListeners();
 
       if (kDebugMode) {
@@ -508,31 +601,28 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   Future<void> createSoloGame(
-      String playerName,
-      String selectedBoard,
-      bool isTestMode,
-      ) {
+    String playerName,
+    String selectedBoard,
+    bool isTestMode,
+  ) {
     return createGame(
       playerName,
       selectedBoard,
       isTestMode,
       maxPlayers: 2,
-      seatTypes: const {
-        0: LudoGame.humanSeat,
-        2: LudoGame.computerSeat,
-      },
+      seatTypes: const {0: LudoGame.humanSeat, 2: LudoGame.computerSeat},
       isPublic: false,
     );
   }
 
   Future<bool> joinGame(
-      String playerName,
-      String inputId, {
-        bool showErrors = true,
-      }) async {
+    String playerName,
+    String inputId, {
+    bool showErrors = true,
+  }) async {
     if (user == null || playerName.trim().isEmpty) {
       if (showErrors) {
-        statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Please enter a nickname.';
+        statusMessage = '❌ Please enter a nickname.';
         notifyListeners();
       }
       return false;
@@ -542,7 +632,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     if (cleanInputId.isEmpty) {
       if (showErrors) {
-        statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Please enter a room code.';
+        statusMessage = '❌ Please enter a room code.';
         notifyListeners();
       }
       return false;
@@ -571,16 +661,16 @@ mixin LudoRoomMixin on ChangeNotifier {
         final message = error.toString();
 
         if (message.contains('Game not found')) {
-          statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Game not found.';
+          statusMessage = '❌ Game not found.';
         } else if (message.contains('already full') ||
             message.contains('no open human seat')) {
-          statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ This room has no open human seat.';
+          statusMessage = '❌ This room has no open human seat.';
         } else if (message.contains('already started')) {
-          statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ This match has already started.';
+          statusMessage = '❌ This match has already started.';
         } else if (message.contains('expired')) {
-          statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ This room has expired.';
+          statusMessage = '❌ This room has expired.';
         } else {
-          statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Could not join the room.';
+          statusMessage = '❌ Could not join the room.';
         }
 
         notifyListeners();
@@ -608,10 +698,9 @@ mixin LudoRoomMixin on ChangeNotifier {
       }
 
       final data = Map<String, dynamic>.from(snap.data()!);
-      final players = List<String>.from(data['players'] ?? []);
-      final maxPlayers =
-      (data['maxPlayers'] as int? ?? 2).clamp(2, 4).toInt();
-      final status = data['status'] as String? ?? 'waiting';
+      final players = _stringList(data['players']);
+      final maxPlayers = _integer(data['maxPlayers'], 2).clamp(2, 4).toInt();
+      final status = _string(data['status'], 'waiting');
 
       if (status != 'waiting') {
         throw Exception('Game already started');
@@ -635,7 +724,9 @@ mixin LudoRoomMixin on ChangeNotifier {
       } else {
         final rawExpiresAt = data['expiresAt'];
         if (rawExpiresAt is Timestamp &&
-            !rawExpiresAt.toDate().toUtc().isAfter(DateTime.now().toUtc())) {
+            !rawExpiresAt.toDate().toUtc().isAfter(
+              estimatedServerNow.toUtc(),
+            )) {
           throw Exception('Room expired');
         }
       }
@@ -673,19 +764,16 @@ mixin LudoRoomMixin on ChangeNotifier {
       final isTestModeActive = data['isTestModeActive'] == true;
       final initialPos = isTestModeActive ? 49 : -1;
 
-      final playerNames = Map<String, dynamic>.from(
-        data['playerNames'] ?? {},
-      );
+      final playerNames = _dynamicMap(data['playerNames']);
       playerNames[currentUser.uid] = playerName;
 
-      final preferredColors = Map<String, dynamic>.from(
-        data['preferredColors'] ?? {},
+      final preferredColors = _dynamicMap(data['preferredColors']);
+      preferredColors[currentUser.uid] = LudoPalette.defaultForSeat(
+        availableSeat,
       );
-      preferredColors[currentUser.uid] =
-          LudoPalette.defaultForSeat(availableSeat);
       playerSeats[currentUser.uid] = availableSeat;
 
-      final pieces = Map<String, dynamic>.from(data['pieces'] ?? {});
+      final pieces = _dynamicMap(data['pieces']);
       pieces[currentUser.uid] = createDefaultPieces(initialPos);
 
       final updatedPlayers = _sortPlayersBySeat(
@@ -700,18 +788,12 @@ mixin LudoRoomMixin on ChangeNotifier {
         playerSeats: playerSeats,
         playerIds: updatedPlayers,
       );
-      final isPublic = data['isPublic'] as bool? ?? true;
-      final hostUid = data['hostUid'] as String? ??
-          (players.isNotEmpty ? players.first : currentUser.uid);
-      final playerPresence = Map<String, dynamic>.from(
-        data['playerPresence'] ?? const <String, dynamic>{},
-      );
-      playerPresence[currentUser.uid] = {
-        'state': PlayerPresence.online,
-        'lastSeenAt': FieldValue.serverTimestamp(),
-        'sessionId': '',
-      };
-
+      final isPublic = data['isPublic'] is bool
+          ? data['isPublic'] as bool
+          : true;
+      final hostUid = _string(data['hostUid']).isNotEmpty
+          ? _string(data['hostUid'])
+          : (players.isNotEmpty ? players.first : currentUser.uid);
       transaction.update(ref, {
         'players': updatedPlayers,
         'playerNames': playerNames,
@@ -731,7 +813,6 @@ mixin LudoRoomMixin on ChangeNotifier {
         'status': 'waiting',
         'activeMove': null,
         'activeDiceRoll': null,
-        'playerPresence': playerPresence,
         'lastActivityAt': FieldValue.serverTimestamp(),
         'expiresAt': _expiresAfter(waitingRoomLease),
       });
@@ -741,12 +822,12 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   Future<void> randomJoinGame(
-      String playerName,
-      String selectedBoard,
-      bool isTestMode,
-      ) async {
+    String playerName,
+    String selectedBoard,
+    bool isTestMode,
+  ) async {
     if (user == null || playerName.trim().isEmpty) {
-      statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Please enter a nickname.';
+      statusMessage = '❌ Please enter a nickname.';
       notifyListeners();
       return;
     }
@@ -755,17 +836,18 @@ mixin LudoRoomMixin on ChangeNotifier {
     notifyListeners();
 
     try {
-      final now = Timestamp.now();
+      final now = Timestamp.fromDate(estimatedServerNow);
       QuerySnapshot<Map<String, dynamic>> query;
 
       try {
         query = await db
             .collection('games')
             .where('status', isEqualTo: 'waiting')
+            .where('isPublic', isEqualTo: true)
             .where('matchmakingOpen', isEqualTo: true)
             .where('expiresAt', isGreaterThan: now)
             .orderBy('expiresAt', descending: true)
-            .limit(20)
+            .limit(5)
             .get();
       } on FirebaseException catch (error) {
         // This fallback keeps matchmaking usable until the composite index
@@ -774,24 +856,26 @@ mixin LudoRoomMixin on ChangeNotifier {
 
         query = await db
             .collection('games')
+            .where('status', isEqualTo: 'waiting')
+            .where('isPublic', isEqualTo: true)
             .where('matchmakingOpen', isEqualTo: true)
-            .limit(100)
+            .limit(20)
             .get();
       }
 
-      final candidates = query.docs.where((candidate) {
-        final data = candidate.data();
-        return data['status'] == 'waiting' &&
-            data['isPublic'] != false &&
-            data['matchmakingOpen'] == true &&
-            _hasActiveWaitingLease(data);
-      }).toList()
-        ..sort((left, right) {
-          final leftExpiry = left.data()['expiresAt'];
-          final rightExpiry = right.data()['expiresAt'];
-          if (leftExpiry is! Timestamp || rightExpiry is! Timestamp) return 0;
-          return rightExpiry.toDate().compareTo(leftExpiry.toDate());
-        });
+      final candidates =
+          query.docs.where((candidate) {
+            final data = candidate.data();
+            return data['status'] == 'waiting' &&
+                data['isPublic'] != false &&
+                data['matchmakingOpen'] == true &&
+                _hasActiveWaitingLease(data);
+          }).toList()..sort((left, right) {
+            final leftExpiry = left.data()['expiresAt'];
+            final rightExpiry = right.data()['expiresAt'];
+            if (leftExpiry is! Timestamp || rightExpiry is! Timestamp) return 0;
+            return rightExpiry.toDate().compareTo(leftExpiry.toDate());
+          });
 
       for (final candidate in candidates) {
         final joined = await _attemptJoinGame(
@@ -815,20 +899,17 @@ mixin LudoRoomMixin on ChangeNotifier {
         selectedBoard,
         isTestMode,
         maxPlayers: 2,
-        seatTypes: const {
-          0: LudoGame.humanSeat,
-          2: LudoGame.humanSeat,
-        },
+        seatTypes: const {0: LudoGame.humanSeat, 2: LudoGame.humanSeat},
         isPublic: true,
       );
 
       if (gameId.isNotEmpty) {
         statusMessage =
-        'No open room was available, so a public room was created for you.';
+            'No open room was available, so a public room was created for you.';
         notifyListeners();
       }
     } catch (error) {
-      statusMessage = 'ÃƒÂ¢Ã‚ÂÃ…â€™ Matchmaking failed.';
+      statusMessage = '❌ Matchmaking failed.';
       notifyListeners();
 
       if (kDebugMode) {
@@ -863,14 +944,19 @@ mixin LudoRoomMixin on ChangeNotifier {
         }
 
         final data = Map<String, dynamic>.from(snap.data()!);
-        final hostUid = data['hostUid'] as String? ?? '';
+        if (_string(data['status'], 'waiting') != 'waiting') {
+          throw Exception('The match has already started');
+        }
+        final hostUid = _string(data['hostUid']);
         if (hostUid != user?.uid) {
           throw Exception('Only the host can update settings');
         }
 
-        final currentPlayers = List<String>.from(data['players'] ?? []);
-        final oldMaxPlayers =
-        (data['maxPlayers'] as int? ?? 2).clamp(2, 4).toInt();
+        final currentPlayers = _stringList(data['players']);
+        final oldMaxPlayers = _integer(
+          data['maxPlayers'],
+          2,
+        ).clamp(2, 4).toInt();
         final oldPlayerSeats = _readPlayerSeats(
           data: data,
           players: currentPlayers,
@@ -908,12 +994,10 @@ mixin LudoRoomMixin on ChangeNotifier {
           }
         }
 
-        final playerNames = Map<String, dynamic>.from(
-          data['playerNames'] ?? {},
-        )..removeWhere((key, _) => _isBotId(key));
-        final preferredColors = Map<String, dynamic>.from(
-          data['preferredColors'] ?? {},
-        )..removeWhere((key, _) => _isBotId(key));
+        final playerNames = _dynamicMap(data['playerNames'])
+          ..removeWhere((key, _) => _isBotId(key));
+        final preferredColors = _dynamicMap(data['preferredColors'])
+          ..removeWhere((key, _) => _isBotId(key));
 
         final updatedPlayerSeats = <String, int>{};
         final updatedPieces = <String, dynamic>{};
@@ -925,25 +1009,21 @@ mixin LudoRoomMixin on ChangeNotifier {
           updatedPlayerSeats[playerId] = seat;
           preferredColors.putIfAbsent(
             playerId,
-                () => LudoPalette.defaultForSeat(seat),
+            () => LudoPalette.defaultForSeat(seat),
           );
           updatedPieces[playerId] = createDefaultPieces(initialPos);
         }
 
         final occupiedPlayers = <String>[...humanBySeat.values];
 
-        for (int slotIndex = 1;
-        slotIndex < newLayout.length;
-        slotIndex++) {
+        for (int slotIndex = 1; slotIndex < newLayout.length; slotIndex++) {
           final physicalSeat = newLayout[slotIndex];
 
-          if (normalizedSeatTypes[physicalSeat] ==
-              LudoGame.computerSeat) {
+          if (normalizedSeatTypes[physicalSeat] == LudoGame.computerSeat) {
             final botId = _botIdForSeat(physicalSeat);
             occupiedPlayers.add(botId);
             playerNames[botId] = 'Computer ${slotIndex + 1}';
-            preferredColors[botId] =
-                LudoPalette.defaultForSeat(physicalSeat);
+            preferredColors[botId] = LudoPalette.defaultForSeat(physicalSeat);
             updatedPlayerSeats[botId] = physicalSeat;
             updatedPieces[botId] = createDefaultPieces(initialPos);
           }
@@ -961,10 +1041,9 @@ mixin LudoRoomMixin on ChangeNotifier {
           playerSeats: updatedPlayerSeats,
           playerIds: updatedPlayers,
         );
-        final hasHumanOpponentSeat = newLayout.skip(1).any(
-              (seat) =>
-          normalizedSeatTypes[seat] == LudoGame.humanSeat,
-        );
+        final hasHumanOpponentSeat = newLayout
+            .skip(1)
+            .any((seat) => normalizedSeatTypes[seat] == LudoGame.humanSeat);
         final effectivePublic = isPublic && hasHumanOpponentSeat;
 
         transaction.update(ref, {
@@ -974,7 +1053,7 @@ mixin LudoRoomMixin on ChangeNotifier {
           'playerSeats': updatedPlayerSeats,
           'seatTypes': _seatTypesToFirestore(normalizedSeatTypes),
           'pieces': updatedPieces,
-          'boardId': selectedBoard,
+          'boardId': 'classic',
           'isTestModeActive': isTestMode,
           'maxPlayers': safeMaxPlayers,
           'opponentType': LudoGame.deriveOpponentType(
@@ -986,9 +1065,7 @@ mixin LudoRoomMixin on ChangeNotifier {
           'matchmakingOpen': effectivePublic && openHumanSeats > 0,
           'diceValue': 0,
           'hasRolled': false,
-          'currentTurn': updatedPlayers.isNotEmpty
-              ? updatedPlayers.first
-              : '',
+          'currentTurn': updatedPlayers.isNotEmpty ? updatedPlayers.first : '',
           'winnerUid': '',
           'finishOrder': const <String>[],
           'startedAt': null,
@@ -997,7 +1074,11 @@ mixin LudoRoomMixin on ChangeNotifier {
           'activeDiceRoll': null,
           'turnPhase': LudoGame.waitingForRoll,
           'turnDeadlineAt': null,
+          'turnStartedAt': null,
+          'turnDurationSeconds': 0,
           'turnVersion': 0,
+          'lastActionId': '',
+          'lastActionType': '',
           'aiControlledPlayers': const <String>[],
           'pendingReconnectPlayers': const <String>[],
           'forfeitedPlayers': const <String>[],
@@ -1024,10 +1105,20 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     final normalizedColor = LudoPalette.normalize(colorId);
 
-    await db.collection('games').doc(gameId).update({
-      'preferredColors.${user!.uid}': normalizedColor,
-      'lastActivityAt': FieldValue.serverTimestamp(),
-      'expiresAt': _expiresAfter(waitingRoomLease),
+    final reference = db.collection('games').doc(gameId);
+    await db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      final data = snapshot.data();
+      if (!snapshot.exists || data == null) return;
+      final latest = LudoGame.fromMap(data);
+      if (latest.status != 'waiting' || !latest.players.contains(user!.uid)) {
+        return;
+      }
+      transaction.update(reference, {
+        'preferredColors.${user!.uid}': normalizedColor,
+        'lastActivityAt': FieldValue.serverTimestamp(),
+        'expiresAt': _expiresAfter(waitingRoomLease),
+      });
     });
   }
 
@@ -1036,7 +1127,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     if (!game!.isReady) {
       statusMessage =
-      'ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Waiting for ${game!.openHumanSeats} more real player(s).';
+          '⚠️ Waiting for ${game!.openHumanSeats} more real player(s).';
       notifyListeners();
       return;
     }
@@ -1044,32 +1135,57 @@ mixin LudoRoomMixin on ChangeNotifier {
     statusMessage = '';
     notifyListeners();
 
-    await db.collection('games').doc(gameId).update({
-      'status': 'playing',
-      'currentTurn': game!.players.first,
-      'diceValue': 0,
-      'hasRolled': false,
-      'winnerUid': '',
-      'finishOrder': const <String>[],
-      'startedAt': FieldValue.serverTimestamp(),
-      'finishedAt': null,
-      'activeMove': null,
-      'activeDiceRoll': null,
-      'turnPhase': LudoGame.waitingForRoll,
-      'turnDeadlineAt': Timestamp.fromDate(
-        DateTime.now().toUtc().add(const Duration(seconds: 10)),
-      ),
-      'turnVersion': 1,
-      'aiControlledPlayers': const <String>[],
-      'pendingReconnectPlayers': const <String>[],
-      'forfeitedPlayers': const <String>[],
-      'automationLease': null,
-      'systemEvent': null,
-      'matchmakingOpen': false,
-      'openSeats': 0,
-      'lastActivityAt': FieldValue.serverTimestamp(),
-      'expiresAt': _expiresAfter(activeGameLease),
-    });
+    final reference = db.collection('games').doc(gameId);
+    try {
+      await db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(reference);
+        final data = snapshot.data();
+        if (!snapshot.exists || data == null) {
+          throw StateError('Room no longer exists');
+        }
+        final latest = LudoGame.fromMap(data);
+        if (latest.hostUid != user?.uid || latest.status != 'waiting') {
+          throw StateError('Only the current host can start this room');
+        }
+        if (!latest.isReady || latest.players.isEmpty) {
+          throw StateError('The room is not ready');
+        }
+        transaction.update(reference, {
+          'status': 'playing',
+          'currentTurn': latest.players.first,
+          'diceValue': 0,
+          'hasRolled': false,
+          'winnerUid': '',
+          'finishOrder': const <String>[],
+          'startedAt': FieldValue.serverTimestamp(),
+          'finishedAt': null,
+          'activeMove': null,
+          'activeDiceRoll': null,
+          'turnPhase': LudoGame.waitingForRoll,
+          'turnStartedAt': FieldValue.serverTimestamp(),
+          'turnDurationSeconds': 10,
+          'turnDeadlineAt': Timestamp.fromDate(
+            estimatedServerNow.toUtc().add(const Duration(seconds: 10)),
+          ),
+          'turnVersion': latest.turnVersion + 1,
+          'lastActionId': '',
+          'lastActionType': '',
+          'aiControlledPlayers': const <String>[],
+          'pendingReconnectPlayers': const <String>[],
+          'forfeitedPlayers': const <String>[],
+          'automationLease': null,
+          'systemEvent': null,
+          'matchmakingOpen': false,
+          'openSeats': 0,
+          'lastActivityAt': FieldValue.serverTimestamp(),
+          'expiresAt': _expiresAfter(activeGameLease),
+        });
+      });
+    } catch (error) {
+      statusMessage =
+          'Could not start the match: ${error.toString().replaceFirst('Bad state: ', '')}';
+      notifyListeners();
+    }
   }
 
   Future<void> leaveGame() async {
@@ -1084,6 +1200,7 @@ mixin LudoRoomMixin on ChangeNotifier {
 
     if (currentGame.status == 'waiting') {
       final ref = db.collection('games').doc(currentGameId);
+      var startedWhileLeaving = false;
 
       try {
         await db.runTransaction((transaction) async {
@@ -1091,36 +1208,36 @@ mixin LudoRoomMixin on ChangeNotifier {
           if (!snap.exists || snap.data() == null) return;
 
           final data = Map<String, dynamic>.from(snap.data()!);
-          final hostUid = data['hostUid'] as String? ??
-              (List<String>.from(data['players'] ?? []).isNotEmpty
-                  ? List<String>.from(data['players'] ?? []).first
-                  : '');
+          if (_string(data['status'], 'waiting') != 'waiting') {
+            startedWhileLeaving = true;
+            return;
+          }
+          final initialPlayers = _stringList(data['players']);
+          final hostUid = _string(data['hostUid']).isNotEmpty
+              ? _string(data['hostUid'])
+              : (initialPlayers.isNotEmpty ? initialPlayers.first : '');
 
           if (hostUid == currentUser.uid) {
             transaction.delete(ref);
             return;
           }
 
-          final players = List<String>.from(data['players'] ?? [])
-            ..remove(currentUser.uid);
-          final maxPlayers =
-          (data['maxPlayers'] as int? ?? 2).clamp(2, 4).toInt();
+          final players = _stringList(data['players'])..remove(currentUser.uid);
+          final maxPlayers = _integer(
+            data['maxPlayers'],
+            2,
+          ).clamp(2, 4).toInt();
           final seatTypes = LudoGame.parseSeatTypes(data, maxPlayers);
 
-          final playerNames = Map<String, dynamic>.from(
-            data['playerNames'] ?? {},
-          )..remove(currentUser.uid);
-          final preferredColors = Map<String, dynamic>.from(
-            data['preferredColors'] ?? {},
-          )..remove(currentUser.uid);
-          final playerSeats = Map<String, dynamic>.from(
-            data['playerSeats'] ?? {},
-          )..remove(currentUser.uid);
-          final pieces = Map<String, dynamic>.from(data['pieces'] ?? {})
+          final playerNames = _dynamicMap(data['playerNames'])
             ..remove(currentUser.uid);
-          final playerPresence = Map<String, dynamic>.from(
-            data['playerPresence'] ?? const <String, dynamic>{},
-          )..remove(currentUser.uid);
+          final preferredColors = _dynamicMap(data['preferredColors'])
+            ..remove(currentUser.uid);
+          final playerSeats = _dynamicMap(data['playerSeats'])
+            ..remove(currentUser.uid);
+          final pieces = _dynamicMap(data['pieces'])..remove(currentUser.uid);
+          final playerPresence = _dynamicMap(data['playerPresence'])
+            ..remove(currentUser.uid);
 
           final typedPlayerSeats = <String, int>{};
           playerSeats.forEach((playerId, value) {
@@ -1129,7 +1246,9 @@ mixin LudoRoomMixin on ChangeNotifier {
             }
           });
 
-          final isPublic = data['isPublic'] as bool? ?? true;
+          final isPublic = data['isPublic'] is bool
+              ? data['isPublic'] as bool
+              : true;
           final openSeats = maxPlayers - players.length;
           final openHumanSeats = _countOpenHumanSeats(
             maxPlayers: maxPlayers,
@@ -1153,6 +1272,7 @@ mixin LudoRoomMixin on ChangeNotifier {
             'expiresAt': _expiresAfter(waitingRoomLease),
           });
         });
+        if (startedWhileLeaving) await markMyselfForfeit();
       } catch (error) {
         if (kDebugMode) {
           print('Leave room error: $error');
@@ -1247,9 +1367,14 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   void _resetLocalGame({String message = ''}) {
-    gameSubscription?.cancel();
+    _listenerGeneration++;
+    unawaited(gameSubscription?.cancel());
     gameSubscription = null;
+    _legacyRecoveryTimer?.cancel();
+    _legacyRecoveryTimer = null;
+    _legacyRecoveryKey = null;
     stopPresenceTracking();
+    stopChatTracking();
     localConnectionState = PlayerPresence.offline;
     stopRoomHeartbeat();
     cancelBotTurn();

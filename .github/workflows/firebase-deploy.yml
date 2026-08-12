@@ -13,6 +13,10 @@ jobs:
         with:
           flutter-version: '3.x'
       - run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
       - run: flutter build web --release
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:

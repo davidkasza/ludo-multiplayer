@@ -1,0 +1,28 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "gamePresence": {
+      "$roomId": {
+        ".read": "auth != null",
+        "$uid": {
+          "sessions": {
+            "$sessionId": {
+              ".write": "auth != null && auth.uid === $uid",
+              ".validate": "!newData.exists() || (newData.hasChildren(['state', 'lastChanged']) && (newData.child('state').val() === 'online' || newData.child('state').val() === 'reconnecting') && newData.child('lastChanged').isNumber() && newData.child('lastChanged').val() === now)"
+            }
+          }
+        }
+      }
+    },
+    "gameChat": {
+      "$roomId": {
+        "latest": {
+          ".read": "auth != null",
+          ".write": "auth != null && newData.child('sender').val() === auth.uid",
+          ".validate": "newData.hasChildren(['sender', 'message', 'timestamp']) && newData.child('message').isString() && newData.child('message').val().length > 0 && newData.child('message').val().length <= 120 && newData.child('timestamp').isNumber() && newData.child('timestamp').val() === now"
+        }
+      }
+    }
+  }
+}

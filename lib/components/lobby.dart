@@ -342,7 +342,7 @@ class _ResumeMatchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final boardLabel = game.boardId == 'classic' ? 'Classic board' : 'Circular board';
+    const boardLabel = 'Classic board';
     final stateLabel = game.status == 'waiting' ? 'Waiting room' : 'Match in progress';
 
     return Container(

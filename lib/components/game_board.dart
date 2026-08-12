@@ -77,8 +77,6 @@ class GameBoard extends StatelessWidget {
                                 currentUserId: controller.user?.uid,
                                 myPlayerIndex: controller.myPlayerIndex,
                                 isMyTurn: controller.isMyTurn,
-                                localMovingPiece:
-                                controller.localMovingPiece,
                                 hopFrame:
                                 controller.hopFrameNotifier.value,
                                 visualActiveMove:
@@ -107,9 +105,7 @@ class GameBoard extends StatelessWidget {
 
     if (game == null || !controller.isMyTurn) return;
     if (!game.hasRolled) return;
-    if (game.activeMove != null) return;
-    if (controller.visualActiveMove != null) return;
-    if (controller.localMovingPiece != null) return;
+    if (controller.visualActiveMove != null || controller.isDiceRolling) return;
     if (controller.myPlayerIndex < 0) return;
 
     final scale = LudoBoardMapper.baseResolution / boardSize;
@@ -117,14 +113,13 @@ class GameBoard extends StatelessWidget {
     final canvasY = details.localPosition.dy * scale;
 
     for (final piece in controller.getMyPieces()) {
-      if (!_isValidMove(piece.pos, piece.inHome, game.diceValue)) continue;
+      if (!controller.isValidMove(piece: piece, diceValue: game.diceValue)) {
+        continue;
+      }
 
       final coords = LudoBoardMapper.getPieceCanvasCoords(
         piece: piece,
         playerIndex: controller.myPlayerIndex,
-        isCurrentPlayer: true,
-        isMyTurn: controller.isMyTurn,
-        localMovingPiece: null,
       );
 
       if (coords == null) continue;
@@ -161,10 +156,4 @@ class GameBoard extends StatelessWidget {
     }
   }
 
-  bool _isValidMove(int position, bool inHome, int diceValue) {
-    if (inHome && position == 5) return false;
-    if (position == -1) return diceValue == 6;
-    if (inHome) return position + diceValue <= 5;
-    return true;
-  }
 }

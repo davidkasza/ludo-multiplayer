@@ -232,7 +232,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
     if (game == null) return const SizedBox.shrink();
 
     final isHost = controller.isHost;
-    final canStart = isHost && game.isReady;
+    final canStart = isHost && game.isReady && !_isSyncing;
     final visibleMaxPlayers = isHost ? _draftMaxPlayers : game.maxPlayers;
     final visibleSeatTypes = isHost
         ? _draftSeatTypes
@@ -464,7 +464,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
     required bool isHost,
     required bool hasHumanOpponentSeat,
   }) async {
-    var boardId = game.boardId;
+    var boardId = 'classic';
     var sandbox = game.isTestModeActive;
     var isPublic = game.isPublic && hasHumanOpponentSeat;
 
@@ -485,7 +485,6 @@ class _WaitingRoomState extends State<WaitingRoom> {
                     enabled: isHost,
                     items: const {
                       'classic': 'Classic Map',
-                      'test': 'Circular Loop',
                     },
                     onChanged: (value) {
                       setSheetState(() => boardId = value);
@@ -1153,7 +1152,7 @@ class _ColourAndSettingsRow extends StatelessWidget {
             ? 0
             : controller.myPlayerIndex);
     final colour = LudoPalette.style(colourId);
-    final boardLabel = game.boardId == 'classic' ? 'Classic' : 'Circular';
+    const boardLabel = 'Classic';
     final visibilityLabel = game.isPublic ? 'Public' : 'Private';
     final sandboxLabel = game.isTestModeActive ? 'Sandbox on' : 'Normal mode';
 

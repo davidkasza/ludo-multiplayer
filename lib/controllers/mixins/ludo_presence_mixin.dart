@@ -1,13 +1,18 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../models/ludo_models.dart';
 
+/// Session-based presence backed by Realtime Database.
+///
+/// Each app instance owns one session node. RTDB removes that node when its
+/// connection closes, so closing one of several tabs cannot mark all of a
+/// user's sessions offline and no heartbeat writes are required.
 mixin LudoPresenceMixin on ChangeNotifier {
-  FirebaseFirestore get db;
+  FirebaseDatabase get realtimeDb;
   User? get user;
   String get gameId;
   LudoGame? get game;
@@ -15,18 +20,24 @@ mixin LudoPresenceMixin on ChangeNotifier {
   String get localConnectionState;
   set localConnectionState(String value);
 
-  static const Duration presenceHeartbeatInterval = Duration(seconds: 15);
-  static const Duration presenceStaleAfter = Duration(seconds: 40);
-
-  Timer? _presenceHeartbeatTimer;
-  Timer? _presenceUiTimer;
+  StreamSubscription<DatabaseEvent>? _connectedSubscription;
+  StreamSubscription<DatabaseEvent>? _presenceSubscription;
+  StreamSubscription<DatabaseEvent>? _serverOffsetSubscription;
+  DatabaseReference? _sessionReference;
   String? _presenceRoomId;
   String? _presenceSessionId;
+  final Stopwatch _serverClock = Stopwatch();
+  DateTime? _serverClockAnchor;
+  bool _hasRealtimePresenceSnapshot = false;
+  Map<String, String> _realtimePresence = const {};
 
-  String get _sessionId {
-    return _presenceSessionId ??=
-    '${DateTime.now().microsecondsSinceEpoch}_${user?.uid ?? 'guest'}';
+  DateTime get estimatedServerNow {
+    final anchor = _serverClockAnchor;
+    return anchor == null ? DateTime.now() : anchor.add(_serverClock.elapsed);
   }
+
+  String get _sessionId => _presenceSessionId ??=
+      '${DateTime.now().microsecondsSinceEpoch}_${identityHashCode(this)}';
 
   bool get isLocallyReconnecting =>
       localConnectionState == PlayerPresence.reconnecting;
@@ -35,7 +46,6 @@ mixin LudoPresenceMixin on ChangeNotifier {
     final currentUser = user;
     final currentGame = game;
     final currentRoomId = gameId;
-
     if (currentUser == null ||
         currentRoomId.isEmpty ||
         currentGame == null ||
@@ -43,69 +53,174 @@ mixin LudoPresenceMixin on ChangeNotifier {
       stopPresenceTracking();
       return;
     }
-
     if (_presenceRoomId == currentRoomId &&
-        _presenceHeartbeatTimer?.isActive == true) {
+        _presenceSubscription != null &&
+        _connectedSubscription != null) {
       return;
     }
 
     stopPresenceTracking();
     _presenceRoomId = currentRoomId;
     localConnectionState = PlayerPresence.online;
-    unawaited(_writePresence(PlayerPresence.online, roomId: currentRoomId));
 
-    _presenceHeartbeatTimer = Timer.periodic(
-      presenceHeartbeatInterval,
-          (_) => unawaited(
-        _writePresence(PlayerPresence.online, roomId: currentRoomId),
-      ),
+    final sessionReference = realtimeDb.ref(
+      'gamePresence/$currentRoomId/${currentUser.uid}/sessions/$_sessionId',
     );
+    _sessionReference = sessionReference;
 
-    _presenceUiTimer = Timer.periodic(
-      const Duration(seconds: 5),
-          (_) => notifyListeners(),
-    );
+    _serverOffsetSubscription = realtimeDb
+        .ref('.info/serverTimeOffset')
+        .onValue
+        .listen(
+          (event) {
+            if (_presenceRoomId != currentRoomId) return;
+            final value = event.snapshot.value;
+            if (value is num) {
+              _serverClockAnchor = DateTime.now().add(
+                Duration(milliseconds: value.toInt()),
+              );
+              _serverClock
+                ..reset()
+                ..start();
+            }
+          },
+          onError: (Object error) =>
+              debugPrint('RTDB server time offset unavailable: $error'),
+        );
+
+    _presenceSubscription = realtimeDb
+        .ref('gamePresence/$currentRoomId')
+        .onValue
+        .listen(
+          (event) {
+            if (_presenceRoomId != currentRoomId) return;
+            final resolved = _parsePresence(event.snapshot.value);
+            _hasRealtimePresenceSnapshot = true;
+            if (!mapEquals(resolved, _realtimePresence)) {
+              _realtimePresence = resolved;
+              notifyListeners();
+            }
+          },
+          onError: (Object error) {
+            _hasRealtimePresenceSnapshot = false;
+            debugPrint('RTDB presence listener failed: $error');
+          },
+        );
+
+    _connectedSubscription = realtimeDb
+        .ref('.info/connected')
+        .onValue
+        .listen(
+          (event) {
+            if (_presenceRoomId != currentRoomId) return;
+            final connected = event.snapshot.value == true;
+            if (!connected) {
+              if (localConnectionState != PlayerPresence.reconnecting) {
+                localConnectionState = PlayerPresence.reconnecting;
+                notifyListeners();
+              }
+              return;
+            }
+            localConnectionState = PlayerPresence.online;
+            unawaited(_publishSession(PlayerPresence.online));
+            notifyListeners();
+          },
+          onError: (Object error) {
+            localConnectionState = PlayerPresence.reconnecting;
+            debugPrint('RTDB connection listener failed: $error');
+            notifyListeners();
+          },
+        );
   }
 
-  void stopPresenceTracking() {
-    _presenceHeartbeatTimer?.cancel();
-    _presenceHeartbeatTimer = null;
-    _presenceUiTimer?.cancel();
-    _presenceUiTimer = null;
-    _presenceRoomId = null;
+  Map<String, String> _parsePresence(Object? value) {
+    if (value is! Map) return const {};
+    final result = <String, String>{};
+    for (final playerEntry in value.entries) {
+      final playerId = playerEntry.key.toString();
+      final playerValue = playerEntry.value;
+      if (playerValue is! Map) continue;
+      final sessions = playerValue['sessions'];
+      if (sessions is! Map || sessions.isEmpty) continue;
+      var state = PlayerPresence.offline;
+      for (final session in sessions.values) {
+        if (session is! Map) continue;
+        final sessionState = session['state'];
+        if (sessionState == PlayerPresence.online) {
+          state = PlayerPresence.online;
+          break;
+        }
+        if (sessionState == PlayerPresence.reconnecting) {
+          state = PlayerPresence.reconnecting;
+        }
+      }
+      result[playerId] = state;
+    }
+    return result;
   }
 
-  Future<void> markPresenceOnline() async {
-    final currentRoomId = gameId;
-    if (currentRoomId.isEmpty) return;
-
-    localConnectionState = PlayerPresence.online;
-    notifyListeners();
-    await _writePresence(PlayerPresence.online, roomId: currentRoomId);
-    startPresenceTracking();
-  }
-
-  Future<void> markPresenceReconnecting() async {
-    final currentRoomId = gameId;
-    localConnectionState = PlayerPresence.reconnecting;
-    notifyListeners();
-
-    if (currentRoomId.isNotEmpty) {
-      await _writePresence(
-        PlayerPresence.reconnecting,
-        roomId: currentRoomId,
-      );
+  Future<void> _publishSession(String state) async {
+    final reference = _sessionReference;
+    if (reference == null) return;
+    try {
+      await reference.onDisconnect().remove();
+      await reference.set({
+        'state': state,
+        'lastChanged': ServerValue.timestamp,
+      });
+    } catch (error) {
+      localConnectionState = PlayerPresence.reconnecting;
+      debugPrint('RTDB presence update failed: $error');
+      notifyListeners();
     }
   }
 
-  Future<void> markPresenceOffline({String? roomId}) async {
-    final targetRoomId = roomId ?? gameId;
-    if (targetRoomId.isEmpty) return;
+  void stopPresenceTracking() {
+    final reference = _sessionReference;
+    _connectedSubscription?.cancel();
+    _presenceSubscription?.cancel();
+    _serverOffsetSubscription?.cancel();
+    _connectedSubscription = null;
+    _presenceSubscription = null;
+    _serverOffsetSubscription = null;
+    _sessionReference = null;
+    _presenceRoomId = null;
+    _presenceSessionId = null;
+    _hasRealtimePresenceSnapshot = false;
+    _realtimePresence = const {};
+    if (reference != null) {
+      unawaited(reference.onDisconnect().cancel());
+      unawaited(reference.remove());
+    }
+  }
 
+  Future<void> markPresenceOnline() async {
+    localConnectionState = PlayerPresence.online;
+    startPresenceTracking();
+    await _publishSession(PlayerPresence.online);
+    notifyListeners();
+  }
+
+  Future<void> markPresenceReconnecting() async {
+    localConnectionState = PlayerPresence.reconnecting;
+    await _publishSession(PlayerPresence.reconnecting);
+    notifyListeners();
+  }
+
+  Future<void> markPresenceOffline({String? roomId}) async {
+    final reference = _sessionReference;
+    if (reference != null) {
+      try {
+        await reference.onDisconnect().cancel();
+        await reference.remove();
+      } catch (error) {
+        debugPrint('RTDB presence cleanup failed: $error');
+      }
+    }
+    _sessionReference = null;
     stopPresenceTracking();
     localConnectionState = PlayerPresence.offline;
     notifyListeners();
-    await _writePresence(PlayerPresence.offline, roomId: targetRoomId);
   }
 
   void noteConnectionError() {
@@ -121,36 +236,11 @@ mixin LudoPresenceMixin on ChangeNotifier {
     startPresenceTracking();
   }
 
-  Future<void> _writePresence(
-      String state, {
-        required String roomId,
-      }) async {
-    final currentUser = user;
-    if (currentUser == null || roomId.isEmpty) return;
-
-    try {
-      await db.collection('games').doc(roomId).update({
-        'playerPresence.${currentUser.uid}': {
-          'state': state,
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'sessionId': _sessionId,
-        },
-      });
-    } catch (error) {
-      if (state == PlayerPresence.online) {
-        localConnectionState = PlayerPresence.reconnecting;
-        notifyListeners();
-      }
-      if (kDebugMode) print('Presence update error: $error');
-    }
-  }
-
   String resolvedPresenceState(String playerId) {
     final currentGame = game;
     if (currentGame == null || playerId.isEmpty) {
       return PlayerPresence.offline;
     }
-
     if (playerId.startsWith('bot_')) return PlayerPresence.ai;
     if (currentGame.forfeitedPlayers.contains(playerId)) {
       return PlayerPresence.forfeited;
@@ -158,43 +248,36 @@ mixin LudoPresenceMixin on ChangeNotifier {
     if (currentGame.aiControlledPlayers.contains(playerId)) {
       return PlayerPresence.ai;
     }
-
     if (playerId == user?.uid && isLocallyReconnecting) {
       return PlayerPresence.reconnecting;
     }
-
-    final presence = currentGame.playerPresence[playerId];
-    if (presence == null) return PlayerPresence.offline;
-
-    if (presence.state == PlayerPresence.reconnecting) {
-      return PlayerPresence.reconnecting;
+    if (playerId == user?.uid &&
+        localConnectionState == PlayerPresence.online) {
+      return PlayerPresence.online;
+    }
+    if (_hasRealtimePresenceSnapshot) {
+      return _realtimePresence[playerId] ?? PlayerPresence.offline;
     }
 
-    final lastSeen = presence.lastSeenAt?.toDate();
+    // Read-only compatibility fallback for rooms created by older clients.
+    final legacy = currentGame.playerPresence[playerId];
+    if (legacy == null) return PlayerPresence.offline;
+    final lastSeen = legacy.lastSeenAt?.toDate();
     if (lastSeen == null ||
-        DateTime.now().difference(lastSeen) > presenceStaleAfter) {
+        estimatedServerNow.difference(lastSeen) > const Duration(seconds: 40)) {
       return PlayerPresence.offline;
     }
-
-    if (presence.state == PlayerPresence.offline) {
-      return PlayerPresence.offline;
-    }
-
-    return PlayerPresence.online;
+    return legacy.state;
   }
 
   String presenceLabelForPlayer(String playerId) {
-    switch (resolvedPresenceState(playerId)) {
-      case PlayerPresence.online:
-        return 'Online';
-      case PlayerPresence.reconnecting:
-        return 'Reconnecting';
-      case PlayerPresence.ai:
-        return playerId.startsWith('bot_') ? 'AI player' : 'AI controlling';
-      case PlayerPresence.forfeited:
-        return 'Forfeited';
-      default:
-        return 'Connection lost';
-    }
+    return switch (resolvedPresenceState(playerId)) {
+      PlayerPresence.online => 'Online',
+      PlayerPresence.reconnecting => 'Reconnecting',
+      PlayerPresence.ai =>
+        playerId.startsWith('bot_') ? 'AI player' : 'AI controlling',
+      PlayerPresence.forfeited => 'Forfeited',
+      _ => 'Connection lost',
+    };
   }
 }

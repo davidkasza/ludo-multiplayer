@@ -23,9 +23,6 @@ class RollingDiceUI extends StatefulWidget {
 class _RollingDiceUIState extends State<RollingDiceUI>
     with SingleTickerProviderStateMixin {
   late final AnimationController _animController;
-  final Random _random = Random();
-
-  int _randomFace = 6;
 
   @override
   void initState() {
@@ -34,13 +31,8 @@ class _RollingDiceUIState extends State<RollingDiceUI>
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
-    )..addListener(() {
-      if (widget.isRolling && _random.nextDouble() > 0.7) {
-        setState(() {
-          _randomFace = _random.nextInt(6) + 1;
-        });
-      }
-    });
+    );
+    if (widget.isRolling) _animController.repeat();
   }
 
   @override
@@ -63,16 +55,15 @@ class _RollingDiceUIState extends State<RollingDiceUI>
 
   @override
   Widget build(BuildContext context) {
-    final displayValue = widget.isRolling
-        ? _randomFace
-        : widget.value == 0
-        ? 6
-        : widget.value;
-
     return AnimatedBuilder(
       animation: _animController,
       builder: (context, child) {
         final animValue = widget.isRolling ? _animController.value : 0.0;
+        final displayValue = widget.isRolling
+            ? ((animValue * 30).floor() % 6) + 1
+            : widget.value == 0
+            ? 6
+            : widget.value;
         final angleX = widget.isRolling ? animValue * pi * 4 : 0.0;
         final angleY = widget.isRolling ? animValue * pi * 2 : 0.0;
         final angleZ = widget.isRolling ? animValue * pi * 2 : 0.0;
@@ -101,9 +92,7 @@ class _RollingDiceUIState extends State<RollingDiceUI>
                 ),
               ],
             ),
-            child: CustomPaint(
-              painter: DicePainter(displayValue),
-            ),
+            child: CustomPaint(painter: DicePainter(displayValue)),
           ),
         );
       },

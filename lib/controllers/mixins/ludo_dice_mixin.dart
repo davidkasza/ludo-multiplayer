@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
 
 mixin LudoDiceMixin on ChangeNotifier {
@@ -13,265 +14,193 @@ mixin LudoDiceMixin on ChangeNotifier {
   User? get user;
   String get gameId;
   LudoGame? get game;
+  DateTime get estimatedServerNow;
 
   String get statusMessage;
   set statusMessage(String value);
-
-  bool get isDiceRolling;
-  set isDiceRolling(bool value);
 
   bool get canRoll;
 
   void syncDiceRollAnimation(ActiveDiceRoll? remoteRoll);
   void stopDiceRollAnimation();
-
-  String getNextPlayerId(String currentPlayerId);
   String getPlayerDisplayTitle(String playerId);
 
   Map<String, dynamic> _activeGameActivityFields() {
     return {
       'lastActivityAt': FieldValue.serverTimestamp(),
       'expiresAt': Timestamp.fromDate(
-        DateTime.now().toUtc().add(const Duration(hours: 24)),
+        estimatedServerNow.toUtc().add(const Duration(hours: 24)),
       ),
     };
   }
 
-  Timestamp _rollDeadline() {
-    return Timestamp.fromDate(
-      DateTime.now().toUtc().add(const Duration(seconds: 10)),
-    );
-  }
-
-  Timestamp _moveDeadline() {
-    return Timestamp.fromDate(
-      DateTime.now().toUtc().add(const Duration(seconds: 30)),
-    );
+  Map<String, dynamic> _turnTimingFields(int seconds) {
+    return {
+      'turnStartedAt': FieldValue.serverTimestamp(),
+      'turnDurationSeconds': seconds,
+      // Kept during the backward-compatible migration. New clients prefer
+      // turnStartedAt + turnDurationSeconds, whose origin is server-authored.
+      'turnDeadlineAt': Timestamp.fromDate(
+        estimatedServerNow.toUtc().add(Duration(seconds: seconds)),
+      ),
+    };
   }
 
   Future<void> rollDice(int cheatDiceValue) async {
     if (!canRoll || user == null) return;
-
-    await rollDiceForPlayer(
-      user!.uid,
-      forcedValue: cheatDiceValue,
-      animateLocally: true,
-    );
+    await rollDiceForPlayer(user!.uid, forcedValue: cheatDiceValue);
   }
 
   Future<void> rollDiceForPlayer(
-      String playerId, {
-        int forcedValue = 0,
-        bool animateLocally = false,
-      }) async {
+    String playerId, {
+    int forcedValue = 0,
+    bool animateLocally = false,
+  }) async {
     final currentUser = user;
     final currentGameId = gameId;
     if (currentUser == null || currentGameId.isEmpty) return;
 
     final gameReference = db.collection('games').doc(currentGameId);
-    const animationDurationMs = 800;
-    const resultWriteDelayMs = 600;
-
-    final value = forcedValue > 0 && game?.isTestModeActive == true
+    final actionId = db.collection('_actionIds').doc().id;
+    final rolledValue =
+        forcedValue >= 1 && forcedValue <= 6 && game?.isTestModeActive == true
         ? forcedValue
         : random.nextInt(6) + 1;
 
-    ActiveDiceRoll? activeDiceRoll;
-
     try {
-      activeDiceRoll = await db.runTransaction<ActiveDiceRoll?>((transaction) async {
+      final result = await db.runTransaction<_DiceResult?>((transaction) async {
         final snapshot = await transaction.get(gameReference);
-        if (!snapshot.exists || snapshot.data() == null) return null;
+        final data = snapshot.data();
+        if (!snapshot.exists || data == null) return null;
 
-        final latest = LudoGame.fromMap(snapshot.data()!);
+        final latest = LudoGame.fromMap(data);
+        if (latest.lastActionId == actionId) return null;
         if (latest.status != 'playing' ||
             latest.currentTurn != playerId ||
             latest.finishOrder.contains(playerId) ||
             latest.hasRolled ||
-            latest.turnPhase != LudoGame.waitingForRoll ||
-            latest.activeMove != null ||
-            latest.activeDiceRoll != null) {
+            latest.turnPhase != LudoGame.waitingForRoll) {
           return null;
         }
 
         final actingForSelf = currentUser.uid == playerId;
-        final lease = latest.automationLease;
-        final ownsAutomationLease = lease != null &&
-            lease.ownerUid == currentUser.uid &&
-            lease.turnVersion == latest.turnVersion &&
-            !lease.isExpired;
-
-        final deadlineExpired = latest.turnDeadlineAt != null &&
-            !latest.turnDeadlineAt!.toDate().isAfter(DateTime.now());
-
-        if (actingForSelf &&
-            (latest.aiControlledPlayers.contains(playerId) || deadlineExpired) &&
-            !ownsAutomationLease) {
+        final deadline = latest.effectiveTurnDeadline;
+        final deadlineExpired =
+            deadline != null && !deadline.isAfter(estimatedServerNow);
+        final mayAutomate = latest.isAiControlled(playerId) || deadlineExpired;
+        if ((actingForSelf && latest.isAiControlled(playerId)) ||
+            (!actingForSelf && !mayAutomate)) {
           return null;
         }
 
-        if (!actingForSelf && !ownsAutomationLease) return null;
-
+        final nextVersion = latest.turnVersion + 1;
         final roll = ActiveDiceRoll(
+          actionId: actionId,
+          turnVersion: nextVersion,
           playerId: playerId,
-          startedAt: DateTime.now().millisecondsSinceEpoch,
-          durationMs: animationDurationMs,
+          startedAt: estimatedServerNow.millisecondsSinceEpoch,
+          durationMs: 800,
+          result: rolledValue,
+          stateApplied: true,
         );
-
-        transaction.update(gameReference, {
-          'activeDiceRoll': roll.toMap(),
-          ..._activeGameActivityFields(),
-        });
-
-        return roll;
-      });
-
-      if (activeDiceRoll == null) return;
-
-      syncDiceRollAnimation(activeDiceRoll);
-
-      await Future.delayed(
-        const Duration(milliseconds: resultWriteDelayMs),
-      );
-
-      final result = await db.runTransaction<_DiceFinalization?>((transaction) async {
-        final snapshot = await transaction.get(gameReference);
-        if (!snapshot.exists || snapshot.data() == null) return null;
-
-        final latest = LudoGame.fromMap(snapshot.data()!);
-        if (latest.status != 'playing' ||
-            latest.currentTurn != playerId ||
-            latest.hasRolled ||
-            latest.activeDiceRoll?.key != activeDiceRoll!.key) {
-          return null;
-        }
-
-        final pieces = latest.pieces[playerId] ?? const <LudoPiece>[];
-        final hasValidMove = pieces.any(
-              (piece) => isValidMove(piece: piece, diceValue: value),
-        );
+        final rollMap = roll.toMap()
+          ..['committedAt'] = FieldValue.serverTimestamp();
 
         final aiControlled = List<String>.from(latest.aiControlledPlayers);
         final pending = List<String>.from(latest.pendingReconnectPlayers);
-        final reconnectNow = pending.contains(playerId) &&
+        final reconnectNow =
+            actingForSelf &&
+            pending.contains(playerId) &&
             !latest.forfeitedPlayers.contains(playerId);
-
-        GameSystemEvent? reconnectEvent;
+        GameSystemEvent? systemEvent;
         if (reconnectNow) {
           aiControlled.remove(playerId);
           pending.remove(playerId);
-          final eventTime = DateTime.now().millisecondsSinceEpoch;
-          reconnectEvent = GameSystemEvent(
-            id: 'reconnected_${playerId}_${latest.turnVersion}_$eventTime',
+          systemEvent = GameSystemEvent(
+            id: 'reconnected_${playerId}_$nextVersion',
             type: GameSystemEvent.playerReconnected,
             playerId: playerId,
-            createdAtMs: eventTime,
+            createdAtMs: estimatedServerNow.millisecondsSinceEpoch,
+          );
+        } else if (deadlineExpired && !latest.isAiControlled(playerId)) {
+          aiControlled.add(playerId);
+          systemEvent = GameSystemEvent(
+            id: 'takeover_${playerId}_$nextVersion',
+            type: GameSystemEvent.aiTakeover,
+            playerId: playerId,
+            createdAtMs: estimatedServerNow.millisecondsSinceEpoch,
           );
         }
 
+        final hasValidMove = LudoRules.hasValidMove(
+          latest.pieces[playerId] ?? const <LudoPiece>[],
+          rolledValue,
+        );
         final update = <String, dynamic>{
-          'diceValue': value,
-          'activeDiceRoll': null,
+          'diceValue': rolledValue,
+          'activeDiceRoll': rollMap,
+          'activeMove': null,
           'automationLease': null,
-          'aiControlledPlayers': aiControlled,
-          'pendingReconnectPlayers': pending,
+          'aiControlledPlayers': aiControlled.toSet().toList(),
+          'pendingReconnectPlayers': pending.toSet().toList(),
+          'lastActionId': actionId,
+          'lastActionType': 'dice',
+          'turnVersion': nextVersion,
           ..._activeGameActivityFields(),
         };
 
-        String message;
-        if (!hasValidMove) {
-          if (value == 6) {
-            update.addAll({
-              'hasRolled': false,
-              'currentTurn': playerId,
-              'turnPhase': LudoGame.waitingForRoll,
-              'turnDeadlineAt': _rollDeadline(),
-              'turnVersion': latest.turnVersion + 1,
-            });
-            message =
-            '🎲 ${getPlayerDisplayTitle(playerId)} rolled a 6, but has no valid move. Roll again!';
-          } else {
-            final nextPlayer = _nextActivePlayer(latest, playerId);
-            update.addAll({
-              'hasRolled': false,
-              'currentTurn': nextPlayer,
-              'turnPhase': LudoGame.waitingForRoll,
-              'turnDeadlineAt': _rollDeadline(),
-              'turnVersion': latest.turnVersion + 1,
-            });
-            message =
-            '🎲 ${getPlayerDisplayTitle(playerId)} rolled $value. No available move; turn skipped.';
-          }
-        } else {
+        String message = '';
+        if (hasValidMove) {
           update.addAll({
             'hasRolled': true,
             'turnPhase': LudoGame.waitingForMove,
-            'turnDeadlineAt': _moveDeadline(),
-            'turnVersion': latest.turnVersion + 1,
+            ..._turnTimingFields(30),
           });
-          message = '';
+        } else {
+          final resolution = LudoRules.resolveNoValidMove(
+            players: latest.players,
+            currentPlayerId: playerId,
+            finishedPlayers: latest.finishOrder,
+            diceValue: rolledValue,
+          );
+          update.addAll({
+            'hasRolled': false,
+            'currentTurn': resolution.nextPlayerId,
+            'turnPhase': LudoGame.waitingForRoll,
+            ..._turnTimingFields(10),
+          });
+          message = resolution.keepsTurn
+              ? '🎲 ${getPlayerDisplayTitle(playerId)} rolled a 6, but has no valid move. Roll again!'
+              : '🎲 ${getPlayerDisplayTitle(playerId)} rolled $rolledValue. No available move; turn skipped.';
         }
-
-        if (reconnectEvent != null) {
-          update['systemEvent'] = reconnectEvent.toMap();
+        if (systemEvent != null) {
+          update['systemEvent'] = systemEvent.toMap();
         }
 
         transaction.update(gameReference, update);
-        return _DiceFinalization(message: message);
+        return _DiceResult(roll: roll, message: message);
       });
 
-      if (result != null) {
-        statusMessage = result.message;
-        notifyListeners();
-      }
-    } catch (error) {
+      if (result == null) return;
+      syncDiceRollAnimation(result.roll);
+      statusMessage = result.message;
+      notifyListeners();
+    } catch (error, stackTrace) {
+      debugPrint('Dice action failed: $error\n$stackTrace');
       statusMessage = '❌ Could not roll the dice.';
       stopDiceRollAnimation();
       notifyListeners();
-
-      if (currentGameId.isNotEmpty) {
-        try {
-          await gameReference.update({
-            'activeDiceRoll': null,
-            'automationLease': null,
-            ..._activeGameActivityFields(),
-          });
-        } catch (_) {
-          // Preserve the useful original error.
-        }
-      }
     }
   }
 
-  String _nextActivePlayer(LudoGame latest, String currentPlayerId) {
-    if (latest.players.isEmpty) return '';
-
-    final finished = latest.finishOrder.toSet();
-    final currentIndex = latest.players.indexOf(currentPlayerId);
-    final startIndex = currentIndex < 0 ? -1 : currentIndex;
-
-    for (int offset = 1; offset <= latest.players.length; offset++) {
-      final candidate =
-      latest.players[(startIndex + offset) % latest.players.length];
-      if (!finished.contains(candidate)) return candidate;
-    }
-
-    return '';
-  }
-
-  bool isValidMove({
-    required LudoPiece piece,
-    required int diceValue,
-  }) {
-    if (piece.pos == 5 && piece.inHome) return false;
-    if (piece.pos == -1) return diceValue == 6;
-    if (piece.inHome) return piece.pos + diceValue <= 5;
-    return true;
+  bool isValidMove({required LudoPiece piece, required int diceValue}) {
+    return LudoRules.isValidMove(piece, diceValue);
   }
 }
 
-class _DiceFinalization {
+class _DiceResult {
+  final ActiveDiceRoll roll;
   final String message;
 
-  const _DiceFinalization({required this.message});
+  const _DiceResult({required this.roll, required this.message});
 }

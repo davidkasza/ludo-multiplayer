@@ -1,36 +1,53 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+
+int _readInt(Object? value, int fallback) =>
+    value is num ? value.toInt() : fallback;
+
+String _readString(Object? value, [String fallback = '']) =>
+    value is String ? value : fallback;
+
+bool _readBool(Object? value, [bool fallback = false]) =>
+    value is bool ? value : fallback;
+
+List<String> _readStringList(Object? value) {
+  if (value is! Iterable) return const <String>[];
+  return value.whereType<String>().toList(growable: false);
+}
+
+Map<String, dynamic>? _readMap(Object? value) {
+  if (value is! Map) return null;
+  return Map<String, dynamic>.from(value);
+}
 
 class LudoPiece {
   final int id;
   final int pos;
   final bool inHome;
 
-  const LudoPiece({
-    required this.id,
-    required this.pos,
-    required this.inHome,
-  });
+  const LudoPiece({required this.id, required this.pos, required this.inHome});
 
   factory LudoPiece.fromMap(Map<String, dynamic> map) {
+    final id = _readInt(map['id'], 0);
+    final pos = _readInt(map['pos'], -1);
+    final inHome = _readBool(map['inHome']);
+    if (id < 1 ||
+        id > 4 ||
+        (inHome ? pos < 0 || pos > 5 : pos < -1 || pos > 51)) {
+      debugPrint('Normalizing malformed Ludo piece: $map');
+    }
     return LudoPiece(
-      id: map['id'] as int,
-      pos: map['pos'] as int,
-      inHome: map['inHome'] as bool,
+      id: id.clamp(1, 4).toInt(),
+      pos: inHome ? pos.clamp(0, 5).toInt() : pos.clamp(-1, 51).toInt(),
+      inHome: inHome,
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'pos': pos,
-      'inHome': inHome,
-    };
+    return {'id': id, 'pos': pos, 'inHome': inHome};
   }
 
-  LudoPiece copyWith({
-    int? pos,
-    bool? inHome,
-  }) {
+  LudoPiece copyWith({int? pos, bool? inHome}) {
     return LudoPiece(
       id: id,
       pos: pos ?? this.pos,
@@ -39,71 +56,49 @@ class LudoPiece {
   }
 }
 
-class LocalMovingPiece {
-  final int id;
-  final int currentVisualPos;
-  final bool inHome;
-  final int stepCount;
-
-  const LocalMovingPiece({
-    required this.id,
-    required this.currentVisualPos,
-    required this.inHome,
-    required this.stepCount,
-  });
-
-  LocalMovingPiece copyWith({
-    int? currentVisualPos,
-    bool? inHome,
-    int? stepCount,
-  }) {
-    return LocalMovingPiece(
-      id: id,
-      currentVisualPos: currentVisualPos ?? this.currentVisualPos,
-      inHome: inHome ?? this.inHome,
-      stepCount: stepCount ?? this.stepCount,
-    );
-  }
-}
-
 class ActiveMoveStep {
   final int pos;
   final bool inHome;
 
-  const ActiveMoveStep({
-    required this.pos,
-    required this.inHome,
-  });
+  const ActiveMoveStep({required this.pos, required this.inHome});
 
   factory ActiveMoveStep.fromMap(Map<String, dynamic> map) {
     return ActiveMoveStep(
-      pos: map['pos'] as int? ?? -1,
-      inHome: map['inHome'] as bool? ?? false,
+      pos: _readInt(map['pos'], -1),
+      inHome: _readBool(map['inHome']),
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'pos': pos,
-      'inHome': inHome,
-    };
+    return {'pos': pos, 'inHome': inHome};
   }
 }
 
 class ActiveMove {
+  final String actionId;
+  final int turnVersion;
   final String playerId;
   final int pieceId;
   final int startedAt;
   final int stepDurationMs;
   final List<ActiveMoveStep> steps;
+  final bool stateApplied;
+  final Timestamp? committedAt;
 
   const ActiveMove({
+    this.actionId = '',
+    this.turnVersion = 0,
     required this.playerId,
     required this.pieceId,
     required this.startedAt,
     required this.stepDurationMs,
     required this.steps,
+    this.stateApplied = false,
+    this.committedAt,
   });
+
+  String get key =>
+      actionId.isNotEmpty ? actionId : '${playerId}_${pieceId}_$startedAt';
 
   int get totalDurationMs {
     if (steps.length <= 1) return 0;
@@ -134,38 +129,45 @@ class ActiveMove {
 
     final parsedSteps = rawSteps is List
         ? rawSteps
-        .map(
-          (step) => ActiveMoveStep.fromMap(
-        Map<String, dynamic>.from(step),
-      ),
-    )
-        .toList()
+              .map(_readMap)
+              .whereType<Map<String, dynamic>>()
+              .map(ActiveMoveStep.fromMap)
+              .toList()
         : <ActiveMoveStep>[];
 
     return ActiveMove(
-      playerId: map['playerId'] as String? ?? '',
-      pieceId: map['pieceId'] as int? ?? 0,
-      startedAt: map['startedAt'] as int? ??
-          DateTime.now().millisecondsSinceEpoch,
-      stepDurationMs: map['stepDurationMs'] as int? ?? 250,
+      actionId: _readString(map['actionId']),
+      turnVersion: _readInt(map['turnVersion'], 0),
+      playerId: _readString(map['playerId']),
+      pieceId: _readInt(map['pieceId'], 0),
+      startedAt: _readInt(map['startedAt'], 0),
+      stepDurationMs: _readInt(map['stepDurationMs'], 250),
       steps: parsedSteps.isNotEmpty
           ? parsedSteps
           : [
-        ActiveMoveStep(
-          pos: map['currentVisualPos'] as int? ?? -1,
-          inHome: map['inHome'] as bool? ?? false,
-        ),
-      ],
+              ActiveMoveStep(
+                pos: _readInt(map['currentVisualPos'], -1),
+                inHome: _readBool(map['inHome']),
+              ),
+            ],
+      stateApplied: _readBool(map['stateApplied']),
+      committedAt: map['committedAt'] is Timestamp
+          ? map['committedAt'] as Timestamp
+          : null,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
+      'actionId': actionId,
+      'turnVersion': turnVersion,
       'playerId': playerId,
       'pieceId': pieceId,
       'startedAt': startedAt,
       'stepDurationMs': stepDurationMs,
       'steps': steps.map((step) => step.toMap()).toList(),
+      'stateApplied': stateApplied,
+      'committedAt': committedAt,
     };
   }
 }
@@ -183,53 +185,68 @@ class LudoChat {
 
   factory LudoChat.fromMap(Map<String, dynamic> map) {
     return LudoChat(
-      sender: map['sender'] as String? ?? '',
-      message: map['message'] as String? ?? '',
-      timestamp: map['timestamp'] as int? ?? 0,
+      sender: _readString(map['sender']),
+      message: _readString(map['message']),
+      timestamp: _readInt(map['timestamp'], 0),
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'sender': sender,
-      'message': message,
-      'timestamp': timestamp,
-    };
+    return {'sender': sender, 'message': message, 'timestamp': timestamp};
   }
 }
 
 class ActiveDiceRoll {
+  final String actionId;
+  final int turnVersion;
   final String playerId;
   final int startedAt;
   final int durationMs;
+  final int result;
+  final bool stateApplied;
+  final Timestamp? committedAt;
 
   const ActiveDiceRoll({
+    this.actionId = '',
+    this.turnVersion = 0,
     required this.playerId,
     required this.startedAt,
     required this.durationMs,
+    this.result = 0,
+    this.stateApplied = false,
+    this.committedAt,
   });
 
-  String get key => '${playerId}_$startedAt';
+  String get key => actionId.isNotEmpty ? actionId : '${playerId}_$startedAt';
 
   factory ActiveDiceRoll.fromMap(Map<String, dynamic> map) {
     return ActiveDiceRoll(
-      playerId: map['playerId'] as String? ?? '',
-      startedAt: map['startedAt'] as int? ??
-          DateTime.now().millisecondsSinceEpoch,
-      durationMs: map['durationMs'] as int? ?? 800,
+      actionId: _readString(map['actionId']),
+      turnVersion: _readInt(map['turnVersion'], 0),
+      playerId: _readString(map['playerId']),
+      startedAt: _readInt(map['startedAt'], 0),
+      durationMs: _readInt(map['durationMs'], 800),
+      result: _readInt(map['result'], 0),
+      stateApplied: _readBool(map['stateApplied']),
+      committedAt: map['committedAt'] is Timestamp
+          ? map['committedAt'] as Timestamp
+          : null,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
+      'actionId': actionId,
+      'turnVersion': turnVersion,
       'playerId': playerId,
       'startedAt': startedAt,
       'durationMs': durationMs,
+      'result': result,
+      'stateApplied': stateApplied,
+      'committedAt': committedAt,
     };
   }
 }
-
-
 
 class AutomationLease {
   final String ownerUid;
@@ -247,8 +264,8 @@ class AutomationLease {
   factory AutomationLease.fromMap(Map<String, dynamic> map) {
     final rawExpiry = map['expiresAt'];
     return AutomationLease(
-      ownerUid: map['ownerUid'] as String? ?? '',
-      turnVersion: map['turnVersion'] as int? ?? 0,
+      ownerUid: _readString(map['ownerUid']),
+      turnVersion: _readInt(map['turnVersion'], 0),
       expiresAt: rawExpiry is Timestamp ? rawExpiry : Timestamp.now(),
     );
   }
@@ -281,10 +298,10 @@ class GameSystemEvent {
 
   factory GameSystemEvent.fromMap(Map<String, dynamic> map) {
     return GameSystemEvent(
-      id: map['id'] as String? ?? '',
-      type: map['type'] as String? ?? '',
-      playerId: map['playerId'] as String? ?? '',
-      createdAtMs: map['createdAtMs'] as int? ?? 0,
+      id: _readString(map['id']),
+      type: _readString(map['type']),
+      playerId: _readString(map['playerId']),
+      createdAtMs: _readInt(map['createdAtMs'], 0),
     );
   }
 
@@ -297,7 +314,6 @@ class GameSystemEvent {
     };
   }
 }
-
 
 class PlayerPresence {
   static const String online = 'online';
@@ -317,14 +333,9 @@ class PlayerPresence {
   });
 
   factory PlayerPresence.fromMap(Map<String, dynamic> map) {
-    final rawState = map['state'] as String? ?? offline;
-    final normalizedState = {
-      online,
-      reconnecting,
-      offline,
-      ai,
-      forfeited,
-    }.contains(rawState)
+    final rawState = _readString(map['state'], offline);
+    final normalizedState =
+        {online, reconnecting, offline, ai, forfeited}.contains(rawState)
         ? rawState
         : offline;
 
@@ -333,16 +344,12 @@ class PlayerPresence {
       lastSeenAt: map['lastSeenAt'] is Timestamp
           ? map['lastSeenAt'] as Timestamp
           : null,
-      sessionId: map['sessionId'] as String? ?? '',
+      sessionId: _readString(map['sessionId']),
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'state': state,
-      'lastSeenAt': lastSeenAt,
-      'sessionId': sessionId,
-    };
+    return {'state': state, 'lastSeenAt': lastSeenAt, 'sessionId': sessionId};
   }
 }
 
@@ -383,7 +390,11 @@ class LudoGame {
   final ActiveDiceRoll? activeDiceRoll;
   final String turnPhase;
   final Timestamp? turnDeadlineAt;
+  final Timestamp? turnStartedAt;
+  final int turnDurationSeconds;
   final int turnVersion;
+  final String lastActionId;
+  final String lastActionType;
   final List<String> aiControlledPlayers;
   final List<String> pendingReconnectPlayers;
   final List<String> forfeitedPlayers;
@@ -418,7 +429,11 @@ class LudoGame {
     required this.activeDiceRoll,
     required this.turnPhase,
     required this.turnDeadlineAt,
+    required this.turnStartedAt,
+    required this.turnDurationSeconds,
     required this.turnVersion,
+    required this.lastActionId,
+    required this.lastActionType,
     required this.aiControlledPlayers,
     required this.pendingReconnectPlayers,
     required this.forfeitedPlayers,
@@ -445,9 +460,9 @@ class LudoGame {
   }
 
   static Map<int, String> parseSeatTypes(
-      Map<String, dynamic> map,
-      int maxPlayers,
-      ) {
+    Map<String, dynamic> map,
+    int maxPlayers,
+  ) {
     final result = <int, String>{};
     final rawSeatTypes = map['seatTypes'];
 
@@ -460,8 +475,7 @@ class LudoGame {
     }
 
     final layout = seatLayoutForMaxPlayers(maxPlayers);
-    final legacyOpponentType =
-        map['opponentType'] as String? ?? humanOpponents;
+    final legacyOpponentType = _readString(map['opponentType'], humanOpponents);
 
     for (int index = 0; index < layout.length; index++) {
       final seat = layout[index];
@@ -473,9 +487,8 @@ class LudoGame {
 
       result.putIfAbsent(
         seat,
-            () => legacyOpponentType == computerOpponents
-            ? computerSeat
-            : humanSeat,
+        () =>
+            legacyOpponentType == computerOpponents ? computerSeat : humanSeat,
       );
     }
 
@@ -528,8 +541,7 @@ class LudoGame {
 
     int count = 0;
     for (final seat in seatLayoutForMaxPlayers(maxPlayers)) {
-      if (seatTypeForSeat(seat) == humanSeat &&
-          !occupiedSeats.contains(seat)) {
+      if (seatTypeForSeat(seat) == humanSeat && !occupiedSeats.contains(seat)) {
         count++;
       }
     }
@@ -554,7 +566,8 @@ class LudoGame {
   }
 
   bool isAiControlled(String playerId) {
-    return playerId.startsWith('bot_') || aiControlledPlayers.contains(playerId);
+    return playerId.startsWith('bot_') ||
+        aiControlledPlayers.contains(playerId);
   }
 
   bool isPendingReconnect(String playerId) {
@@ -571,23 +584,36 @@ class LudoGame {
     return duration.isNegative ? Duration.zero : duration;
   }
 
+  /// Server-authored start time plus a duration is preferred over the legacy
+  /// absolute deadline. This keeps shared timing independent of client clocks.
+  DateTime? get effectiveTurnDeadline {
+    final serverStart = turnStartedAt?.toDate();
+    if (serverStart != null && turnDurationSeconds > 0) {
+      return serverStart.add(Duration(seconds: turnDurationSeconds));
+    }
+    return turnDeadlineAt?.toDate();
+  }
+
   factory LudoGame.fromMap(Map<String, dynamic> map) {
-    final players = List<String>.from(map['players'] ?? []);
+    final players = _readStringList(map['players']).toSet().toList();
     final piecesMap = <String, List<LudoPiece>>{};
 
     final rawPieces = map['pieces'];
     if (rawPieces is Map) {
       Map<String, dynamic>.from(rawPieces).forEach((uid, piecesList) {
-        if (piecesList is! List) return;
+        if (piecesList is! List) {
+          debugPrint('Ignoring malformed piece list for $uid');
+          return;
+        }
 
         piecesMap[uid] = piecesList
-            .map(
-              (piece) => LudoPiece.fromMap(
-            Map<String, dynamic>.from(piece),
-          ),
-        )
+            .map(_readMap)
+            .whereType<Map<String, dynamic>>()
+            .map(LudoPiece.fromMap)
             .toList();
       });
+    } else if (rawPieces != null) {
+      debugPrint('Ignoring malformed pieces map');
     }
 
     final playerNames = <String, String>{};
@@ -606,7 +632,7 @@ class LudoGame {
       });
     }
 
-    final maxPlayers = (map['maxPlayers'] as int? ?? 2).clamp(2, 4).toInt();
+    final maxPlayers = _readInt(map['maxPlayers'], 2).clamp(2, 4).toInt();
     final layout = seatLayoutForMaxPlayers(maxPlayers);
 
     final playerSeats = <String, int>{};
@@ -620,9 +646,11 @@ class LudoGame {
     }
 
     if (playerSeats.isEmpty) {
-      for (int index = 0;
-      index < players.length && index < layout.length;
-      index++) {
+      for (
+        int index = 0;
+        index < players.length && index < layout.length;
+        index++
+      ) {
         playerSeats[players[index]] = layout[index];
       }
     }
@@ -632,17 +660,21 @@ class LudoGame {
       seatTypes: seatTypes,
       maxPlayers: maxPlayers,
     );
-    final status = map['status'] as String? ?? 'waiting';
-    final isPublic = map['isPublic'] as bool? ?? true;
+    final rawStatus = _readString(map['status'], 'waiting');
+    final status = const {'waiting', 'playing', 'finished'}.contains(rawStatus)
+        ? rawStatus
+        : 'waiting';
+    if (status != rawStatus) debugPrint('Invalid game status: $rawStatus');
+    final isPublic = _readBool(map['isPublic'], true);
     final occupiedSeats = playerSeats.entries
         .where((entry) => players.contains(entry.key))
         .map((entry) => entry.value)
         .toSet();
     final hasOpenHumanSeat = layout.any(
-          (seat) => seatTypes[seat] == humanSeat && !occupiedSeats.contains(seat),
+      (seat) => seatTypes[seat] == humanSeat && !occupiedSeats.contains(seat),
     );
 
-    final rawFinishOrder = List<String>.from(map['finishOrder'] ?? const []);
+    final rawFinishOrder = _readStringList(map['finishOrder']);
     final finishOrder = <String>[];
     for (final playerId in rawFinishOrder) {
       if (players.contains(playerId) && !finishOrder.contains(playerId)) {
@@ -650,7 +682,7 @@ class LudoGame {
       }
     }
 
-    final legacyWinner = map['winnerUid'] as String? ?? '';
+    final legacyWinner = _readString(map['winnerUid']);
     if (finishOrder.isEmpty &&
         status == 'finished' &&
         legacyWinner.isNotEmpty &&
@@ -659,14 +691,14 @@ class LudoGame {
       finishOrder.addAll(players.where((id) => id != legacyWinner));
     }
 
-    final aiControlledPlayers = List<String>.from(
-      map['aiControlledPlayers'] ?? const <String>[],
+    final aiControlledPlayers = _readStringList(
+      map['aiControlledPlayers'],
     ).where(players.contains).toSet().toList();
-    final pendingReconnectPlayers = List<String>.from(
-      map['pendingReconnectPlayers'] ?? const <String>[],
+    final pendingReconnectPlayers = _readStringList(
+      map['pendingReconnectPlayers'],
     ).where(players.contains).toSet().toList();
-    final forfeitedPlayers = List<String>.from(
-      map['forfeitedPlayers'] ?? const <String>[],
+    final forfeitedPlayers = _readStringList(
+      map['forfeitedPlayers'],
     ).where(players.contains).toSet().toList();
 
     final playerPresence = <String, PlayerPresence>{};
@@ -680,17 +712,70 @@ class LudoGame {
       });
     }
 
+    final currentTurn = _readString(map['currentTurn']);
+    if (status == 'playing' && !players.contains(currentTurn)) {
+      throw const FormatException(
+        'Playing game has a current turn that is not a participant',
+      );
+    }
+    final rawDiceValue = _readInt(map['diceValue'], 0);
+    if (rawDiceValue < 0 || rawDiceValue > 6) {
+      debugPrint('Normalizing invalid dice value: $rawDiceValue');
+      if (status == 'playing') {
+        throw const FormatException('Playing game has an invalid dice value');
+      }
+    }
+    final activeMoveMap = _readMap(map['activeMove']);
+    final activeDiceRollMap = _readMap(map['activeDiceRoll']);
+    if (map['activeMove'] != null && activeMoveMap == null) {
+      debugPrint('Ignoring malformed activeMove descriptor');
+    }
+    if (map['activeDiceRoll'] != null && activeDiceRollMap == null) {
+      debugPrint('Ignoring malformed activeDiceRoll descriptor');
+    }
+    final rawTurnPhase = _readString(map['turnPhase']);
+    final turnPhase = {waitingForRoll, waitingForMove}.contains(rawTurnPhase)
+        ? rawTurnPhase
+        : (_readBool(map['hasRolled']) ? waitingForMove : waitingForRoll);
+    if (rawTurnPhase.isNotEmpty && rawTurnPhase != turnPhase) {
+      debugPrint('Normalizing invalid turn phase: $rawTurnPhase');
+    }
+    if (status == 'playing') {
+      for (final playerId in players) {
+        final playerPieces = piecesMap[playerId] ?? const <LudoPiece>[];
+        final pieceIds = playerPieces.map((piece) => piece.id).toSet();
+        if (playerPieces.length != 4 || pieceIds.length != 4) {
+          throw FormatException(
+            'Playing game has invalid pieces for participant $playerId',
+          );
+        }
+      }
+      final hasRolled = _readBool(map['hasRolled']);
+      if ((hasRolled && (rawDiceValue == 0 || turnPhase != waitingForMove)) ||
+          (!hasRolled && turnPhase != waitingForRoll)) {
+        throw const FormatException('Playing game has an invalid turn phase');
+      }
+    }
+    final rawTurnDuration = _readInt(map['turnDurationSeconds'], 0);
+    final turnDurationSeconds = const {0, 10, 30}.contains(rawTurnDuration)
+        ? rawTurnDuration
+        : 0;
+    if (turnDurationSeconds != rawTurnDuration) {
+      debugPrint('Ignoring invalid turn duration: $rawTurnDuration');
+    }
+
     return LudoGame(
       players: players,
       playerNames: playerNames,
       preferredColors: preferredColors,
       playerSeats: playerSeats,
       seatTypes: seatTypes,
-      hostUid: map['hostUid'] as String? ??
-          (players.isNotEmpty ? players.first : ''),
-      currentTurn: map['currentTurn'] as String? ?? '',
-      diceValue: map['diceValue'] as int? ?? 0,
-      hasRolled: map['hasRolled'] as bool? ?? false,
+      hostUid: _readString(map['hostUid']).isNotEmpty
+          ? _readString(map['hostUid'])
+          : (players.isNotEmpty ? players.first : ''),
+      currentTurn: currentTurn,
+      diceValue: rawDiceValue.clamp(0, 6).toInt(),
+      hasRolled: _readBool(map['hasRolled']),
       status: status,
       winnerUid: legacyWinner.isNotEmpty
           ? legacyWinner
@@ -702,48 +787,44 @@ class LudoGame {
       finishedAt: map['finishedAt'] is Timestamp
           ? map['finishedAt'] as Timestamp
           : null,
-      boardId: map['boardId'] as String? ?? 'classic',
+      boardId: _readString(map['boardId'], 'classic'),
       isTestModeActive: map['isTestModeActive'] == true,
       maxPlayers: maxPlayers,
       opponentType: derivedOpponentType,
       isPublic: isPublic,
-      matchmakingOpen: map['matchmakingOpen'] as bool? ??
-          (status == 'waiting' && isPublic && hasOpenHumanSeat),
+      matchmakingOpen: map['matchmakingOpen'] is bool
+          ? map['matchmakingOpen'] as bool
+          : (status == 'waiting' && isPublic && hasOpenHumanSeat),
       activeChat: LudoChat.fromMap(
-        Map<String, dynamic>.from(map['activeChat'] ?? {}),
+        _readMap(map['activeChat']) ?? const <String, dynamic>{},
       ),
       pieces: piecesMap,
-      activeMove: map['activeMove'] == null
+      activeMove: activeMoveMap == null
           ? null
-          : ActiveMove.fromMap(
-        Map<String, dynamic>.from(map['activeMove']),
-      ),
-      activeDiceRoll: map['activeDiceRoll'] == null
+          : ActiveMove.fromMap(activeMoveMap),
+      activeDiceRoll: activeDiceRollMap == null
           ? null
-          : ActiveDiceRoll.fromMap(
-        Map<String, dynamic>.from(map['activeDiceRoll']),
-      ),
-      turnPhase: map['turnPhase'] as String? ??
-          ((map['hasRolled'] as bool? ?? false)
-              ? waitingForMove
-              : waitingForRoll),
+          : ActiveDiceRoll.fromMap(activeDiceRollMap),
+      turnPhase: turnPhase,
       turnDeadlineAt: map['turnDeadlineAt'] is Timestamp
           ? map['turnDeadlineAt'] as Timestamp
           : null,
-      turnVersion: map['turnVersion'] as int? ?? 0,
+      turnStartedAt: map['turnStartedAt'] is Timestamp
+          ? map['turnStartedAt'] as Timestamp
+          : null,
+      turnDurationSeconds: turnDurationSeconds,
+      turnVersion: _readInt(map['turnVersion'], 0),
+      lastActionId: _readString(map['lastActionId']),
+      lastActionType: _readString(map['lastActionType']),
       aiControlledPlayers: aiControlledPlayers,
       pendingReconnectPlayers: pendingReconnectPlayers,
       forfeitedPlayers: forfeitedPlayers,
-      automationLease: map['automationLease'] == null
+      automationLease: _readMap(map['automationLease']) == null
           ? null
-          : AutomationLease.fromMap(
-        Map<String, dynamic>.from(map['automationLease']),
-      ),
-      systemEvent: map['systemEvent'] == null
+          : AutomationLease.fromMap(_readMap(map['automationLease'])!),
+      systemEvent: _readMap(map['systemEvent']) == null
           ? null
-          : GameSystemEvent.fromMap(
-        Map<String, dynamic>.from(map['systemEvent']),
-      ),
+          : GameSystemEvent.fromMap(_readMap(map['systemEvent'])!),
       playerPresence: playerPresence,
     );
   }
@@ -788,7 +869,11 @@ class LudoGame {
       'activeDiceRoll': activeDiceRoll?.toMap(),
       'turnPhase': turnPhase,
       'turnDeadlineAt': turnDeadlineAt,
+      'turnStartedAt': turnStartedAt,
+      'turnDurationSeconds': turnDurationSeconds,
       'turnVersion': turnVersion,
+      'lastActionId': lastActionId,
+      'lastActionType': lastActionType,
       'aiControlledPlayers': aiControlledPlayers,
       'pendingReconnectPlayers': pendingReconnectPlayers,
       'forfeitedPlayers': forfeitedPlayers,

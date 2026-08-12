@@ -1,54 +1,62 @@
-import 'package:flutter/foundation.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../models/ludo_models.dart';
 
 mixin LudoSandboxMixin on ChangeNotifier {
   FirebaseFirestore get db;
-
   User? get user;
-
   String get gameId;
+  DateTime get estimatedServerNow;
 
-  LudoGame? get game;
+  Future<void> teleportPiece(int pieceId, String value) async {
+    final currentUser = user;
+    if (gameId.isEmpty || currentUser == null) return;
 
-  List<LudoPiece> getMyPieces();
-
-  Future<void> teleportPiece(int pieceId, String valueStr) async {
-    if (gameId.isEmpty || user == null || game == null) return;
-
-    final pieces = getMyPieces();
-
-    int newPos = -1;
-    bool newInHome = false;
-
-    if (valueStr == "-1") {
-      newPos = -1;
-      newInHome = false;
-    } else if (valueStr.startsWith("H")) {
-      newPos = int.parse(valueStr.replaceAll("H", ""));
-      newInHome = true;
+    var newPosition = -1;
+    var inHome = false;
+    if (value == '-1') {
+      newPosition = -1;
+    } else if (value.startsWith('H')) {
+      newPosition = int.tryParse(value.substring(1)) ?? -2;
+      inHome = true;
     } else {
-      newPos = int.parse(valueStr);
-      newInHome = false;
+      newPosition = int.tryParse(value) ?? -2;
+    }
+    if (pieceId < 1 ||
+        pieceId > 4 ||
+        (inHome
+            ? newPosition < 0 || newPosition > 5
+            : newPosition < -1 || newPosition > 51)) {
+      return;
     }
 
-    final updatedPieces = pieces.map((p) {
-      if (p.id != pieceId) return p.toMap();
-
-      return p.copyWith(
-        pos: newPos,
-        inHome: newInHome,
-      ).toMap();
-    }).toList();
-
-    await db.collection('games').doc(gameId).update({
-      'pieces.${user!.uid}': updatedPieces,
-      'lastActivityAt': FieldValue.serverTimestamp(),
-      'expiresAt': Timestamp.fromDate(
-        DateTime.now().toUtc().add(const Duration(hours: 24)),
-      ),
+    final reference = db.collection('games').doc(gameId);
+    await db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      final data = snapshot.data();
+      if (!snapshot.exists || data == null) return;
+      final latest = LudoGame.fromMap(data);
+      if (!latest.isTestModeActive ||
+          !latest.players.contains(currentUser.uid)) {
+        return;
+      }
+      final pieces = latest.pieces[currentUser.uid] ?? const <LudoPiece>[];
+      if (!pieces.any((piece) => piece.id == pieceId)) return;
+      transaction.update(reference, {
+        'pieces.${currentUser.uid}': pieces
+            .map(
+              (piece) => piece.id == pieceId
+                  ? piece.copyWith(pos: newPosition, inHome: inHome).toMap()
+                  : piece.toMap(),
+            )
+            .toList(),
+        'lastActivityAt': FieldValue.serverTimestamp(),
+        'expiresAt': Timestamp.fromDate(
+          estimatedServerNow.toUtc().add(const Duration(hours: 24)),
+        ),
+      });
     });
   }
 }

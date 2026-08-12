@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../game/classic_board.dart';
 import '../../game/ludo_board_mapper.dart';
 import '../../game/ludo_palette.dart';
+import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
 import 'drawable_piece.dart';
 import 'ludo_piece_painter.dart';
@@ -15,7 +16,6 @@ class DynamicPiecesPainter extends CustomPainter {
   final String? currentUserId;
   final int myPlayerIndex;
   final bool isMyTurn;
-  final LocalMovingPiece? localMovingPiece;
   final double hopFrame;
   final ActiveMove? visualActiveMove;
   final int visualMoveElapsedMs;
@@ -26,7 +26,6 @@ class DynamicPiecesPainter extends CustomPainter {
     required this.currentUserId,
     required this.myPlayerIndex,
     required this.isMyTurn,
-    required this.localMovingPiece,
     required this.hopFrame,
     required this.visualActiveMove,
     required this.visualMoveElapsedMs,
@@ -79,12 +78,6 @@ class DynamicPiecesPainter extends CustomPainter {
         final coords = LudoBoardMapper.getPieceCanvasCoords(
           piece: displayPiece,
           playerIndex: playerIndex,
-          isCurrentPlayer: isCurrentPlayer,
-          isMyTurn: isMyTurn,
-          // activeMove already contains the current visual step. Passing
-          // localMovingPiece here would overwrite it with the original position,
-          // so the piece would only bounce in place and jump at the end.
-          localMovingPiece: null,
         );
 
         if (coords == null) continue;
@@ -155,12 +148,8 @@ class DynamicPiecesPainter extends CustomPainter {
         final isSelectable = drawable.isCurrentPlayer &&
             isMyTurn &&
             game!.hasRolled &&
-            game!.activeMove == null &&
             visualActiveMove == null &&
-            _isValidMove(
-              piece: drawable.piece,
-              diceValue: game!.diceValue,
-            );
+            LudoRules.isValidMove(drawable.piece, game!.diceValue);
 
         if (isSelectable) {
           SelectableGlowPainter.draw(
@@ -237,23 +226,12 @@ class DynamicPiecesPainter extends CustomPainter {
     );
   }
 
-  bool _isValidMove({
-    required LudoPiece piece,
-    required int diceValue,
-  }) {
-    if (piece.pos == 5 && piece.inHome) return false;
-    if (piece.pos == -1) return diceValue == 6;
-    if (piece.inHome) return piece.pos + diceValue <= 5;
-    return true;
-  }
-
   @override
   bool shouldRepaint(covariant DynamicPiecesPainter oldDelegate) {
     return oldDelegate.game != game ||
         oldDelegate.currentUserId != currentUserId ||
         oldDelegate.myPlayerIndex != myPlayerIndex ||
         oldDelegate.isMyTurn != isMyTurn ||
-        oldDelegate.localMovingPiece != localMovingPiece ||
         oldDelegate.hopFrame != hopFrame ||
         oldDelegate.visualActiveMove != visualActiveMove ||
         oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs ||

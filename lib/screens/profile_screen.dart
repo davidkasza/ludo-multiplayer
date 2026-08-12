@@ -1083,7 +1083,7 @@ class _HistoryRow extends StatelessWidget {
   }
 
   static String _boardName(String boardId) {
-    return boardId == 'classic' ? 'Classic' : 'Circular';
+    return 'Classic';
   }
 
   static String _formatDuration(Duration? duration) {

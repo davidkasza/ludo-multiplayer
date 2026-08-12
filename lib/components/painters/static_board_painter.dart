@@ -253,43 +253,6 @@ class StaticBoardPainter extends CustomPainter {
     );
   }
 
-  void _drawStartArrow({
-    required Canvas canvas,
-    required BoardPoint point,
-    required String arrow,
-    required double cellSize,
-  }) {
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: arrow,
-        style: TextStyle(
-          fontSize: cellSize * 0.48,
-          fontWeight: FontWeight.w900,
-          color: Colors.white.withOpacity(0.92),
-          shadows: const [
-            Shadow(
-              color: Colors.black54,
-              blurRadius: 2,
-              offset: Offset(0, 1),
-            ),
-          ],
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    final left = point.x * cellSize;
-    final top = point.y * cellSize;
-
-    textPainter.paint(
-      canvas,
-      Offset(
-        left + cellSize / 2 - textPainter.width / 2,
-        top + cellSize / 2 - textPainter.height / 2,
-      ),
-    );
-  }
-
   void _drawGoalTriangles({
     required Canvas canvas,
     required List<LudoColorStyle> styles,

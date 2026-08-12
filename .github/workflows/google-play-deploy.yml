@@ -36,6 +36,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
       - name: Build App Bundle
         run: flutter build appbundle --release --build-number=$(( ${{ github.run_number }} + 100 )) --build-name=1.0.${{ github.run_number }}
 
