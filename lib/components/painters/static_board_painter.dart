@@ -1,65 +1,55 @@
 import 'package:flutter/material.dart';
 
 import '../../game/classic_board.dart';
-import '../../game/ludo_board_mapper.dart';
+import '../../game/ludo_board_geometry.dart';
 import '../../game/ludo_palette.dart';
 import '../../theme/app_colors.dart';
 
 class StaticBoardPainter extends CustomPainter {
   final List<String> seatColorIds;
+  final LudoBoardGeometry geometry;
 
   const StaticBoardPainter({
     required this.seatColorIds,
+    required this.geometry,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    const double baseRes = LudoBoardMapper.baseResolution;
-    const double cellSize = LudoBoardMapper.cellSize;
+    final baseRes = geometry.boardExtent;
+    final cellSize = geometry.nominalCellExtent;
 
     canvas.save();
     canvas.scale(size.width / baseRes);
 
     canvas.drawRect(
-      const Rect.fromLTWH(0, 0, 600, 600),
+      Rect.fromLTWH(0, 0, baseRes, baseRes),
       Paint()..color = AppColors.background,
     );
 
     final styles = List.generate(
       4,
-          (index) => LudoPalette.style(
+      (index) => LudoPalette.style(
         seatColorIds.length > index
             ? seatColorIds[index]
             : LudoPalette.defaultForSeat(index),
       ),
     );
 
-    const baseOrigins = [
-      BoardPoint(0, 0),
-      BoardPoint(0, 9),
-      BoardPoint(9, 9),
-      BoardPoint(9, 0),
-    ];
-
-    final double basePxSize = cellSize * 6;
-    final outlinedCells = <BoardPoint>[];
+    final basePxSize = cellSize * 6;
+    final outlinedCells = <Rect>[];
 
     for (int seat = 0; seat < 4; seat++) {
-      final origin = baseOrigins[seat];
+      final baseBounds = geometry.baseAreaBounds(seat);
       final style = styles[seat];
-      final left = origin.x * cellSize;
-      final top = origin.y * cellSize;
 
-      canvas.drawRect(
-        Rect.fromLTWH(left, top, basePxSize, basePxSize),
-        Paint()..color = style.base,
-      );
+      canvas.drawRect(baseBounds, Paint()..color = style.base);
 
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
-            left + basePxSize * 0.15,
-            top + basePxSize * 0.15,
+            baseBounds.left + basePxSize * 0.15,
+            baseBounds.top + basePxSize * 0.15,
             basePxSize * 0.70,
             basePxSize * 0.70,
           ),
@@ -68,47 +58,31 @@ class StaticBoardPainter extends CustomPainter {
         Paint()..color = Colors.white,
       );
 
-      for (final basePoint in ClassicBoard.baseForSeat(seat)) {
+      for (int pieceId = 1; pieceId <= 4; pieceId++) {
         _drawBaseNest(
           canvas: canvas,
-          point: basePoint,
+          center: geometry.baseSlotCenter(seat, pieceId),
           color: style.base,
           cellSize: cellSize,
         );
       }
 
       for (int homeIndex = 0; homeIndex < 5; homeIndex++) {
-        final homePoint = ClassicBoard.homeForSeat(seat)[homeIndex];
-        _fillCell(
-          canvas: canvas,
-          point: homePoint,
-          color: style.base,
-          cellSize: cellSize,
-        );
-        outlinedCells.add(homePoint);
+        final homeBounds = geometry.homeLaneCellBounds(seat, homeIndex);
+        _fillCell(canvas: canvas, bounds: homeBounds, color: style.base);
+        outlinedCells.add(homeBounds);
       }
     }
 
-    const starSafeTiles = {
-      3,
-      8,
-      16,
-      21,
-      29,
-      34,
-      42,
-      47,
-    };
+    const starSafeTiles = {3, 8, 16, 21, 29, 34, 42, 47};
 
     final startSeatByPathIndex = <int, int>{
       for (int seat = 0; seat < 4; seat++)
         ClassicBoard.startOffsetForSeat(seat): seat,
     };
 
-    for (int pathIndex = 0;
-    pathIndex < ClassicBoard.gridPath.length;
-    pathIndex++) {
-      final point = ClassicBoard.gridPath[pathIndex];
+    for (int pathIndex = 0; pathIndex < ClassicBoard.size; pathIndex++) {
+      final bounds = geometry.outerTrackCellBounds(pathIndex);
       Color background = Colors.white;
 
       final startSeat = startSeatByPathIndex[pathIndex];
@@ -118,21 +92,11 @@ class StaticBoardPainter extends CustomPainter {
         background = AppColors.yellowSafe;
       }
 
-      _fillCell(
-        canvas: canvas,
-        point: point,
-        color: background,
-        cellSize: cellSize,
-      );
-      outlinedCells.add(point);
+      _fillCell(canvas: canvas, bounds: bounds, color: background);
+      outlinedCells.add(bounds);
     }
 
-    _drawGoalTriangles(
-      canvas: canvas,
-      styles: styles,
-      cellSize: cellSize,
-      baseResolution: baseRes,
-    );
+    _drawGoalTriangles(canvas: canvas, styles: styles);
 
     // Borders are drawn only after every cell has been filled. Previously the
     // next cell's fill covered part of the preceding cell's border, which made
@@ -143,80 +107,37 @@ class StaticBoardPainter extends CustomPainter {
       ..strokeWidth = baseRes / size.width
       ..isAntiAlias = false;
 
-    for (final point in outlinedCells) {
-      canvas.drawRect(
-        Rect.fromLTWH(
-          point.x * cellSize,
-          point.y * cellSize,
-          cellSize,
-          cellSize,
-        ),
-        gridPaint,
-      );
+    for (final bounds in outlinedCells) {
+      canvas.drawRect(bounds, gridPaint);
     }
 
     for (final pathIndex in starSafeTiles) {
       _drawStar(
         canvas: canvas,
-        point: ClassicBoard.gridPath[pathIndex],
-        cellSize: cellSize,
+        bounds: geometry.outerTrackCellBounds(pathIndex),
       );
     }
 
-    /*const startArrows = ['→', '↑', '←', '↓'];
-    for (int seat = 0; seat < 4; seat++) {
-      _drawStartArrow(
-        canvas: canvas,
-        point: ClassicBoard.gridPath[
-        ClassicBoard.startOffsetForSeat(seat)
-        ],
-        arrow: startArrows[seat],
-        cellSize: cellSize,
-      );
-    }*/
-
-    _drawGoalCrowns(
-      canvas: canvas,
-      cellSize: cellSize,
-      baseResolution: baseRes,
-    );
+    _drawGoalCrowns(canvas);
 
     canvas.restore();
   }
 
   void _fillCell({
     required Canvas canvas,
-    required BoardPoint point,
+    required Rect bounds,
     required Color color,
-    required double cellSize,
   }) {
-    canvas.drawRect(
-      Rect.fromLTWH(
-        point.x * cellSize,
-        point.y * cellSize,
-        cellSize,
-        cellSize,
-      ),
-      Paint()..color = color,
-    );
+    canvas.drawRect(bounds, Paint()..color = color);
   }
 
   void _drawBaseNest({
     required Canvas canvas,
-    required BoardPoint point,
+    required Offset center,
     required Color color,
     required double cellSize,
   }) {
-    final center = Offset(
-      point.x * cellSize + cellSize / 2,
-      point.y * cellSize + cellSize / 2,
-    );
-
-    canvas.drawCircle(
-      center,
-      cellSize * 0.38,
-      Paint()..color = Colors.white,
-    );
+    canvas.drawCircle(center, cellSize * 0.38, Paint()..color = Colors.white);
 
     canvas.drawCircle(
       center,
@@ -228,27 +149,17 @@ class StaticBoardPainter extends CustomPainter {
     );
   }
 
-  void _drawStar({
-    required Canvas canvas,
-    required BoardPoint point,
-    required double cellSize,
-  }) {
+  void _drawStar({required Canvas canvas, required Rect bounds}) {
     final textPainter = TextPainter(
-      text: const TextSpan(
-        text: '⭐',
-        style: TextStyle(fontSize: 14),
-      ),
+      text: const TextSpan(text: '⭐', style: TextStyle(fontSize: 14)),
       textDirection: TextDirection.ltr,
     )..layout();
-
-    final left = point.x * cellSize;
-    final top = point.y * cellSize;
 
     textPainter.paint(
       canvas,
       Offset(
-        left + cellSize / 2 - textPainter.width / 2,
-        top + cellSize / 2 - textPainter.height / 2,
+        bounds.center.dx - textPainter.width / 2,
+        bounds.center.dy - textPainter.height / 2,
       ),
     );
   }
@@ -256,12 +167,11 @@ class StaticBoardPainter extends CustomPainter {
   void _drawGoalTriangles({
     required Canvas canvas,
     required List<LudoColorStyle> styles,
-    required double cellSize,
-    required double baseResolution,
   }) {
-    final start = cellSize * 6;
-    final end = cellSize * 9;
-    final center = Offset(baseResolution / 2, baseResolution / 2);
+    final goalBounds = geometry.goalAreaBounds;
+    final start = goalBounds.left;
+    final end = goalBounds.right;
+    final center = geometry.boardCenter;
 
     // Path order follows the physical seat order:
     // top-left -> left, bottom-left -> bottom,
@@ -290,10 +200,7 @@ class StaticBoardPainter extends CustomPainter {
     ];
 
     for (int seat = 0; seat < 4; seat++) {
-      canvas.drawPath(
-        paths[seat],
-        Paint()..color = styles[seat].base,
-      );
+      canvas.drawPath(paths[seat], Paint()..color = styles[seat].base);
       canvas.drawPath(
         paths[seat],
         Paint()
@@ -304,25 +211,11 @@ class StaticBoardPainter extends CustomPainter {
     }
   }
 
-  void _drawGoalCrowns({
-    required Canvas canvas,
-    required double cellSize,
-    required double baseResolution,
-  }) {
-    final center = Offset(baseResolution / 2, baseResolution / 2);
-    final crownCenters = [
-      Offset(cellSize * 6.5, center.dy),
-      Offset(center.dx, cellSize * 8.5),
-      Offset(cellSize * 8.5, center.dy),
-      Offset(center.dx, cellSize * 6.5),
-    ];
-
-    for (final crownCenter in crownCenters) {
+  void _drawGoalCrowns(Canvas canvas) {
+    for (int seat = 0; seat < 4; seat++) {
+      final crownCenter = geometry.goalCenter(seat);
       final crownPainter = TextPainter(
-        text: const TextSpan(
-          text: '👑',
-          style: TextStyle(fontSize: 17),
-        ),
+        text: const TextSpan(text: '👑', style: TextStyle(fontSize: 17)),
         textDirection: TextDirection.ltr,
       )..layout();
 
@@ -338,6 +231,7 @@ class StaticBoardPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StaticBoardPainter oldDelegate) {
+    if (oldDelegate.geometry != geometry) return true;
     if (oldDelegate.seatColorIds.length != seatColorIds.length) return true;
 
     for (int i = 0; i < seatColorIds.length; i++) {

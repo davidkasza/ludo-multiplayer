@@ -3,10 +3,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_game/components/painters/selectable_glow_painter.dart';
+import 'package:ludo_game/game/classic_grid_geometry.dart';
 import 'package:ludo_game/game/ludo_board_mapper.dart';
 import 'package:ludo_game/game/ludo_palette.dart';
 import 'package:ludo_game/game/ludo_presentation.dart';
 import 'package:ludo_game/models/ludo_models.dart';
+
+const _boardMapper = LudoBoardMapper(geometry: ClassicGridGeometry());
 
 void main() {
   bool isSelectable(LudoPiece piece, int diceValue) {
@@ -162,7 +165,7 @@ void main() {
       for (var seat = 0; seat < 4; seat++) {
         for (var pieceId = 1; pieceId <= 4; pieceId++) {
           expect(
-            LudoBoardMapper.getPieceCanvasCoords(
+            _boardMapper.pieceCenter(
               piece: LudoPiece(id: pieceId, pos: -1, inHome: false),
               playerIndex: seat,
             ),
@@ -171,14 +174,14 @@ void main() {
         }
 
         expect(
-          LudoBoardMapper.getPieceCanvasCoords(
+          _boardMapper.pieceCenter(
             piece: const LudoPiece(id: 1, pos: 0, inHome: false),
             playerIndex: seat,
           ),
           isNotNull,
         );
         expect(
-          LudoBoardMapper.getPieceCanvasCoords(
+          _boardMapper.pieceCenter(
             piece: const LudoPiece(id: 1, pos: 51, inHome: false),
             playerIndex: seat,
           ),
@@ -187,7 +190,7 @@ void main() {
 
         for (var position = 0; position <= 5; position++) {
           expect(
-            LudoBoardMapper.getPieceCanvasCoords(
+            _boardMapper.pieceCenter(
               piece: LudoPiece(id: 1, pos: position, inHome: true),
               playerIndex: seat,
             ),

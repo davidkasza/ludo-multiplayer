@@ -3,7 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../controllers/ludo_controller.dart';
-import '../game/classic_board.dart';
+import '../game/ludo_board_geometry_resolver.dart';
 import '../game/ludo_board_mapper.dart';
 import '../theme/app_colors.dart';
 import 'painters/board_painters.dart';
@@ -11,10 +11,7 @@ import 'painters/board_painters.dart';
 class GameBoard extends StatelessWidget {
   final LudoController controller;
 
-  const GameBoard({
-    super.key,
-    required this.controller,
-  });
+  const GameBoard({super.key, required this.controller});
 
   static const double maxBoardSize = 500.0;
 
@@ -22,6 +19,10 @@ class GameBoard extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final geometry = LudoBoardGeometryResolver.resolve(
+          controller.game?.boardId,
+        );
+        final boardMapper = LudoBoardMapper(geometry: geometry);
         final boardSize = min(
           maxBoardSize,
           min(constraints.maxWidth, constraints.maxHeight),
@@ -29,16 +30,13 @@ class GameBoard extends StatelessWidget {
 
         return Center(
           child: GestureDetector(
-            onTapDown: (details) => _handleTap(details, boardSize),
+            onTapDown: (details) => _handleTap(details, boardSize, boardMapper),
             child: Container(
               width: boardSize,
               height: boardSize,
               decoration: BoxDecoration(
                 color: AppColors.background,
-                border: Border.all(
-                  color: const Color(0xff2d3748),
-                  width: 5,
-                ),
+                border: Border.all(color: const Color(0xff2d3748), width: 5),
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
@@ -58,6 +56,7 @@ class GameBoard extends StatelessWidget {
                           size: Size.square(boardSize),
                           painter: StaticBoardPainter(
                             seatColorIds: controller.seatColorIds,
+                            geometry: geometry,
                           ),
                         ),
                       ),
@@ -79,11 +78,11 @@ class GameBoard extends StatelessWidget {
                                 canSelectPieces: controller.canSelectPiece,
                                 animationFrame:
                                     controller.moveAnimationFrameNotifier.value,
-                                visualActiveMove:
-                                controller.visualActiveMove,
+                                visualActiveMove: controller.visualActiveMove,
                                 visualMoveElapsedMs:
-                                controller.visualMoveElapsedMs,
+                                    controller.visualMoveElapsedMs,
                                 seatColorIds: controller.seatColorIds,
+                                boardMapper: boardMapper,
                               ),
                             );
                           },
@@ -100,58 +99,34 @@ class GameBoard extends StatelessWidget {
     );
   }
 
-  void _handleTap(TapDownDetails details, double boardSize) {
+  void _handleTap(
+    TapDownDetails details,
+    double boardSize,
+    LudoBoardMapper boardMapper,
+  ) {
     final game = controller.game;
 
     if (game == null || !controller.canSelectPiece) return;
     if (controller.myPlayerIndex < 0) return;
 
-    final scale = LudoBoardMapper.baseResolution / boardSize;
-    final canvasX = details.localPosition.dx * scale;
-    final canvasY = details.localPosition.dy * scale;
+    final boardPosition = boardMapper.boardPointFromLocal(
+      localPosition: details.localPosition,
+      renderedBoardExtent: boardSize,
+    );
 
     for (final piece in controller.getMyPieces()) {
       if (!controller.isValidMove(piece: piece, diceValue: game.diceValue)) {
         continue;
       }
 
-      final coords = LudoBoardMapper.getPieceCanvasCoords(
+      if (boardMapper.hitTestPiece(
+        boardPosition: boardPosition,
         piece: piece,
         playerIndex: controller.myPlayerIndex,
-      );
-
-      if (coords == null) continue;
-
-      double centerX;
-      double centerY;
-
-      if (piece.inHome && piece.pos == 5) {
-        final goal = LudoBoardMapper.goalBoardCenter(
-          controller.myPlayerIndex,
-        );
-        centerX = goal.dx;
-        centerY = goal.dy;
-      } else {
-        centerX = ((coords.dx - ClassicBoard.offset) / ClassicBoard.step)
-            .roundToDouble() *
-            LudoBoardMapper.cellSize +
-            LudoBoardMapper.cellSize / 2;
-
-        centerY = ((coords.dy - ClassicBoard.offset) / ClassicBoard.step)
-            .roundToDouble() *
-            LudoBoardMapper.cellSize +
-            LudoBoardMapper.cellSize / 2;
-      }
-
-      final distance = sqrt(
-        pow(canvasX - centerX, 2) + pow(canvasY - centerY, 2),
-      );
-
-      if (distance <= LudoBoardMapper.cellSize * 0.65) {
+      )) {
         controller.movePiece(piece.id);
         break;
       }
     }
   }
-
 }

@@ -1,7 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ludo_game/game/classic_grid_geometry.dart';
 import 'package:ludo_game/game/ludo_animation.dart';
 import 'package:ludo_game/game/ludo_board_mapper.dart';
 import 'package:ludo_game/models/ludo_models.dart';
+
+const _boardMapper = LudoBoardMapper(geometry: ClassicGridGeometry());
 
 void main() {
   group('piece motion', () {
@@ -54,11 +57,11 @@ void main() {
     test('base and start coordinates exist for every player seat', () {
       for (var seat = 0; seat < 4; seat++) {
         for (var pieceId = 1; pieceId <= 4; pieceId++) {
-          final base = LudoBoardMapper.getPieceCanvasCoords(
+          final base = _boardMapper.pieceCenter(
             piece: LudoPiece(id: pieceId, pos: -1, inHome: false),
             playerIndex: seat,
           );
-          final start = LudoBoardMapper.getPieceCanvasCoords(
+          final start = _boardMapper.pieceCenter(
             piece: LudoPiece(id: pieceId, pos: 0, inHome: false),
             playerIndex: seat,
           );

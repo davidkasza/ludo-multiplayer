@@ -2,7 +2,6 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-import '../../game/classic_board.dart';
 import '../../game/ludo_animation.dart';
 import '../../game/ludo_board_mapper.dart';
 import '../../game/ludo_palette.dart';
@@ -22,6 +21,7 @@ class DynamicPiecesPainter extends CustomPainter {
   final ActiveMove? visualActiveMove;
   final int visualMoveElapsedMs;
   final List<String> seatColorIds;
+  final LudoBoardMapper boardMapper;
 
   const DynamicPiecesPainter({
     required this.game,
@@ -32,14 +32,15 @@ class DynamicPiecesPainter extends CustomPainter {
     required this.visualActiveMove,
     required this.visualMoveElapsedMs,
     required this.seatColorIds,
+    required this.boardMapper,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (game == null || game!.pieces.isEmpty) return;
 
-    const double baseRes = LudoBoardMapper.baseResolution;
-    const double cellSize = LudoBoardMapper.cellSize;
+    final baseRes = boardMapper.geometry.boardExtent;
+    final cellSize = boardMapper.geometry.nominalCellExtent;
 
     canvas.save();
     canvas.scale(size.width / baseRes);
@@ -67,7 +68,8 @@ class DynamicPiecesPainter extends CustomPainter {
       final style = LudoPalette.style(colorId);
 
       for (final piece in piecesList) {
-        final isSharedMoving = activeMove != null &&
+        final isSharedMoving =
+            activeMove != null &&
             activeMove.playerId == playerId &&
             activeMove.pieceId == piece.id;
         final capturedPiece = _capturedPiece(
@@ -311,16 +313,7 @@ class DynamicPiecesPainter extends CustomPainter {
   }
 
   Offset? _pieceCenter({required LudoPiece piece, required int playerIndex}) {
-    final coords = LudoBoardMapper.getPieceCanvasCoords(
-      piece: piece,
-      playerIndex: playerIndex,
-    );
-    if (coords == null) return null;
-    return _resolvePieceCenter(
-      coords: coords,
-      piece: piece,
-      playerIndex: playerIndex,
-    );
+    return boardMapper.pieceCenter(piece: piece, playerIndex: playerIndex);
   }
 
   ActiveMoveCapture? _capturedPiece(
@@ -399,32 +392,6 @@ class DynamicPiecesPainter extends CustomPainter {
     );
   }
 
-  Offset _resolvePieceCenter({
-    required Offset coords,
-    required LudoPiece piece,
-    required int playerIndex,
-  }) {
-    const double cellSize = LudoBoardMapper.cellSize;
-
-    double cx = ((coords.dx - ClassicBoard.offset) / ClassicBoard.step)
-        .roundToDouble() *
-        cellSize +
-        cellSize / 2;
-
-    double cy = ((coords.dy - ClassicBoard.offset) / ClassicBoard.step)
-        .roundToDouble() *
-        cellSize +
-        cellSize / 2;
-
-    if (piece.inHome && piece.pos == 5) {
-      final goal = LudoBoardMapper.goalBoardCenter(playerIndex);
-      cx = goal.dx;
-      cy = goal.dy;
-    }
-
-    return Offset(cx, cy);
-  }
-
   Offset _getStackOffset({
     required int index,
     required int count,
@@ -459,6 +426,7 @@ class DynamicPiecesPainter extends CustomPainter {
         oldDelegate.animationFrame != animationFrame ||
         oldDelegate.visualActiveMove != visualActiveMove ||
         oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs ||
+        oldDelegate.boardMapper.geometry != boardMapper.geometry ||
         !_sameColors(oldDelegate.seatColorIds, seatColorIds);
   }
 
