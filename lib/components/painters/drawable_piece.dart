@@ -8,10 +8,12 @@ class DrawablePiece {
   final LudoPiece piece;
   final bool isCurrentPlayer;
   final bool isSharedMoving;
+  final String? animationGroupKey;
   final Offset center;
   final Offset groundCenter;
   final double elevation;
   final double motionScale;
+  final double rotation;
   final Color colorBright;
   final Color colorDark;
 
@@ -21,10 +23,12 @@ class DrawablePiece {
     required this.piece,
     required this.isCurrentPlayer,
     required this.isSharedMoving,
+    required this.animationGroupKey,
     required this.center,
     required this.groundCenter,
     required this.elevation,
     required this.motionScale,
+    required this.rotation,
     required this.colorBright,
     required this.colorDark,
   });

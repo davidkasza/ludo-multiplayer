@@ -74,6 +74,33 @@ class ActiveMoveStep {
   }
 }
 
+class ActiveMoveCapture {
+  final String playerId;
+  final int pieceId;
+  final ActiveMoveStep from;
+
+  const ActiveMoveCapture({
+    required this.playerId,
+    required this.pieceId,
+    required this.from,
+  });
+
+  factory ActiveMoveCapture.fromMap(Map<String, dynamic> map) {
+    final fromMap = _readMap(map['from']);
+    return ActiveMoveCapture(
+      playerId: _readString(map['playerId']),
+      pieceId: _readInt(map['pieceId'], 0),
+      from: fromMap == null
+          ? const ActiveMoveStep(pos: -1, inHome: false)
+          : ActiveMoveStep.fromMap(fromMap),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {'playerId': playerId, 'pieceId': pieceId, 'from': from.toMap()};
+  }
+}
+
 class ActiveMove {
   final String actionId;
   final int turnVersion;
@@ -82,6 +109,7 @@ class ActiveMove {
   final int startedAt;
   final int stepDurationMs;
   final List<ActiveMoveStep> steps;
+  final List<ActiveMoveCapture> capturedPieces;
   final bool stateApplied;
   final Timestamp? committedAt;
 
@@ -93,6 +121,7 @@ class ActiveMove {
     required this.startedAt,
     required this.stepDurationMs,
     required this.steps,
+    this.capturedPieces = const <ActiveMoveCapture>[],
     this.stateApplied = false,
     this.committedAt,
   });
@@ -134,6 +163,23 @@ class ActiveMove {
               .map(ActiveMoveStep.fromMap)
               .toList()
         : <ActiveMoveStep>[];
+    final rawCapturedPieces = map['capturedPieces'];
+    final parsedCapturedPieces = rawCapturedPieces is List
+        ? rawCapturedPieces
+              .map(_readMap)
+              .whereType<Map<String, dynamic>>()
+              .map(ActiveMoveCapture.fromMap)
+              .where(
+                (capture) =>
+                    capture.playerId.isNotEmpty &&
+                    capture.pieceId >= 1 &&
+                    capture.pieceId <= 4 &&
+                    !capture.from.inHome &&
+                    capture.from.pos >= 0 &&
+                    capture.from.pos <= 51,
+              )
+              .toList(growable: false)
+        : const <ActiveMoveCapture>[];
 
     return ActiveMove(
       actionId: _readString(map['actionId']),
@@ -150,6 +196,7 @@ class ActiveMove {
                 inHome: _readBool(map['inHome']),
               ),
             ],
+      capturedPieces: parsedCapturedPieces,
       stateApplied: _readBool(map['stateApplied']),
       committedAt: map['committedAt'] is Timestamp
           ? map['committedAt'] as Timestamp
@@ -166,6 +213,10 @@ class ActiveMove {
       'startedAt': startedAt,
       'stepDurationMs': stepDurationMs,
       'steps': steps.map((step) => step.toMap()).toList(),
+      if (capturedPieces.isNotEmpty)
+        'capturedPieces': capturedPieces
+            .map((capture) => capture.toMap())
+            .toList(),
       'stateApplied': stateApplied,
       'committedAt': committedAt,
     };

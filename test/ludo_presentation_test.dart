@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_game/game/ludo_presentation.dart';
+import 'package:ludo_game/models/ludo_models.dart';
 
 void main() {
   group('dice presentation', () {
@@ -93,6 +94,129 @@ void main() {
 
       expect(duringResult, 'blue');
       expect(afterResult, 'red');
+    });
+  });
+
+  group('capture presentation', () {
+    final move = ActiveMove(
+      actionId: 'capture-action',
+      playerId: 'red',
+      pieceId: 1,
+      startedAt: 0,
+      stepDurationMs: 250,
+      steps: const [
+        ActiveMoveStep(pos: 10, inHome: false),
+        ActiveMoveStep(pos: 11, inHome: false),
+        ActiveMoveStep(pos: 12, inHome: false),
+      ],
+      capturedPieces: const [
+        ActiveMoveCapture(
+          playerId: 'blue',
+          pieceId: 3,
+          from: ActiveMoveStep(pos: 25, inHome: false),
+        ),
+      ],
+      stateApplied: true,
+    );
+
+    test('keeps the victim in place while the attacker approaches', () {
+      final frame = LudoPresentation.captureFrame(
+        move: move,
+        elapsedMs: move.totalDurationMs - 1,
+      );
+
+      expect(frame.phase, CapturePresentationPhase.approaching);
+      expect(frame.returnProgress, 0);
+    });
+
+    test('plays impact before starting the return glide', () {
+      final impact = LudoPresentation.captureFrame(
+        move: move,
+        elapsedMs: move.totalDurationMs + LudoPresentation.captureImpactMs ~/ 2,
+      );
+      final returnStart = LudoPresentation.captureFrame(
+        move: move,
+        elapsedMs: move.totalDurationMs + LudoPresentation.captureImpactMs,
+      );
+
+      expect(impact.phase, CapturePresentationPhase.impact);
+      expect(impact.impactPulse, greaterThan(0.9));
+      expect(returnStart.phase, CapturePresentationPhase.returning);
+      expect(returnStart.returnProgress, 0);
+    });
+
+    test('resumes return progress and skips a fully elapsed capture', () {
+      final midReturn = LudoPresentation.captureFrame(
+        move: move,
+        elapsedMs:
+            move.totalDurationMs +
+            LudoPresentation.captureImpactMs +
+            LudoPresentation.captureReturnMs ~/ 2,
+      );
+      final complete = LudoPresentation.captureFrame(
+        move: move,
+        elapsedMs: LudoPresentation.movePresentationDurationMs(move),
+      );
+
+      expect(midReturn.phase, CapturePresentationPhase.returning);
+      expect(midReturn.returnProgress, closeTo(0.5, 0.0001));
+      expect(complete.phase, CapturePresentationPhase.complete);
+      expect(complete.returnProgress, 1);
+    });
+
+    test('does not extend ordinary move presentation timing', () {
+      final ordinaryMove = ActiveMove(
+        playerId: 'red',
+        pieceId: 1,
+        startedAt: 0,
+        stepDurationMs: 250,
+        steps: move.steps,
+        stateApplied: true,
+      );
+
+      expect(
+        LudoPresentation.movePresentationDurationMs(ordinaryMove),
+        ordinaryMove.totalDurationMs,
+      );
+      expect(
+        LudoPresentation.captureFrame(move: ordinaryMove, elapsedMs: 0).phase,
+        CapturePresentationPhase.complete,
+      );
+    });
+  });
+
+  group('piece selection sequencing', () {
+    bool canSelect({
+      bool isPlaying = true,
+      bool isAuthoritativeTurn = true,
+      bool hasRolled = true,
+      bool isWaitingForMove = true,
+      bool isDiceRolling = false,
+      bool hasActiveMovePresentation = false,
+    }) {
+      return LudoPresentation.canSelectPiece(
+        isPlaying: isPlaying,
+        isAuthoritativeTurn: isAuthoritativeTurn,
+        hasRolled: hasRolled,
+        isWaitingForMove: isWaitingForMove,
+        isDiceRolling: isDiceRolling,
+        hasActiveMovePresentation: hasActiveMovePresentation,
+      );
+    }
+
+    test('enables selection as soon as the dice has landed', () {
+      expect(canSelect(), isTrue);
+    });
+
+    test('blocks selection while dice motion or piece motion is active', () {
+      expect(canSelect(isDiceRolling: true), isFalse);
+      expect(canSelect(hasActiveMovePresentation: true), isFalse);
+    });
+
+    test('blocks no-move and non-current-player states', () {
+      expect(canSelect(hasRolled: false), isFalse);
+      expect(canSelect(isWaitingForMove: false), isFalse);
+      expect(canSelect(isAuthoritativeTurn: false), isFalse);
     });
   });
 

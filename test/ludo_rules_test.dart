@@ -60,6 +60,10 @@ void main() {
       );
       expect(result.didCapture, isTrue);
       expect(result.pieces['b']!.single.pos, -1);
+      expect(result.capturedPieces, hasLength(1));
+      expect(result.capturedPieces.single.playerId, 'b');
+      expect(result.capturedPieces.single.pieceId, 1);
+      expect(result.capturedPieces.single.from.pos, 27);
     });
 
     test('does not capture on a safe square', () {
@@ -74,7 +78,44 @@ void main() {
         destination: const ActiveMoveStep(pos: 3, inHome: false),
       );
       expect(result.didCapture, isFalse);
+      expect(result.capturedPieces, isEmpty);
       expect(result.pieces['b']!.single.pos, 29);
+    });
+
+    test('does not capture from a home-lane destination', () {
+      final result = LudoRules.applyCaptures(
+        pieces: const {
+          'a': [LudoPiece(id: 1, pos: 2, inHome: true)],
+          'b': [LudoPiece(id: 1, pos: 27, inHome: false)],
+        },
+        playerSeats: const {'a': 0, 'b': 2},
+        players: const ['a', 'b'],
+        movingPlayerId: 'a',
+        destination: const ActiveMoveStep(pos: 2, inHome: true),
+      );
+
+      expect(result.didCapture, isFalse);
+      expect(result.capturedPieces, isEmpty);
+      expect(result.pieces['b']!.single.pos, 27);
+    });
+
+    test('records every captured piece in a stack', () {
+      final result = LudoRules.applyCaptures(
+        pieces: const {
+          'a': [LudoPiece(id: 1, pos: 1, inHome: false)],
+          'b': [
+            LudoPiece(id: 2, pos: 27, inHome: false),
+            LudoPiece(id: 3, pos: 27, inHome: false),
+          ],
+        },
+        playerSeats: const {'a': 0, 'b': 2},
+        players: const ['a', 'b'],
+        movingPlayerId: 'a',
+        destination: const ActiveMoveStep(pos: 1, inHome: false),
+      );
+
+      expect(result.capturedPieces.map((capture) => capture.pieceId), [2, 3]);
+      expect(result.pieces['b']!.every((piece) => piece.pos == -1), isTrue);
     });
   });
 
@@ -174,6 +215,35 @@ void main() {
     expect(legacy.key, isNot(applied.key));
     expect(LudoRules.needsActionRecovery(activeMove: legacy), isTrue);
     expect(LudoRules.needsActionRecovery(activeMove: applied), isFalse);
+  });
+
+  test('active move capture metadata round-trips safely', () {
+    final move = ActiveMove.fromMap(
+      ActiveMove(
+        actionId: 'capture-1',
+        playerId: 'a',
+        pieceId: 1,
+        startedAt: 1,
+        stepDurationMs: 250,
+        steps: const [
+          ActiveMoveStep(pos: 0, inHome: false),
+          ActiveMoveStep(pos: 1, inHome: false),
+        ],
+        capturedPieces: const [
+          ActiveMoveCapture(
+            playerId: 'b',
+            pieceId: 4,
+            from: ActiveMoveStep(pos: 27, inHome: false),
+          ),
+        ],
+        stateApplied: true,
+      ).toMap(),
+    );
+
+    expect(move.capturedPieces, hasLength(1));
+    expect(move.capturedPieces.single.playerId, 'b');
+    expect(move.capturedPieces.single.pieceId, 4);
+    expect(move.capturedPieces.single.from.pos, 27);
   });
 
   test('legacy and partially malformed data is normalized safely', () {

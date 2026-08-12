@@ -6,6 +6,7 @@ import '../../game/classic_board.dart';
 import '../../game/ludo_animation.dart';
 import '../../game/ludo_board_mapper.dart';
 import '../../game/ludo_palette.dart';
+import '../../game/ludo_presentation.dart';
 import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
 import 'drawable_piece.dart';
@@ -44,6 +45,13 @@ class DynamicPiecesPainter extends CustomPainter {
     canvas.scale(size.width / baseRes);
 
     final drawables = <DrawablePiece>[];
+    final activeMove = visualActiveMove;
+    final captureFrame = activeMove == null
+        ? const CapturePresentationFrame.complete()
+        : LudoPresentation.captureFrame(
+            move: activeMove,
+            elapsedMs: visualMoveElapsedMs,
+          );
 
     for (final playerId in game!.players) {
       final piecesList = game!.pieces[playerId] ?? const <LudoPiece>[];
@@ -59,16 +67,22 @@ class DynamicPiecesPainter extends CustomPainter {
       final style = LudoPalette.style(colorId);
 
       for (final piece in piecesList) {
-        final activeMove = visualActiveMove;
         final isSharedMoving = activeMove != null &&
             activeMove.playerId == playerId &&
             activeMove.pieceId == piece.id;
+        final capturedPiece = _capturedPiece(
+          activeMove?.capturedPieces ?? const <ActiveMoveCapture>[],
+          playerId,
+          piece.id,
+        );
 
         LudoPiece displayPiece = piece;
         Offset? groundCenter;
         var elevation = 0.0;
         var motionScale = 1.0;
         var isMotionActive = false;
+        var rotation = 0.0;
+        String? animationGroupKey;
 
         if (isSharedMoving) {
           final frame = LudoAnimation.pieceFrame(
@@ -76,6 +90,9 @@ class DynamicPiecesPainter extends CustomPainter {
             visualMoveElapsedMs,
           );
           isMotionActive = !frame.isComplete;
+          if (isMotionActive) {
+            animationGroupKey = 'moving_${activeMove.playerId}_${piece.id}';
+          }
           final fromPiece = piece.copyWith(
             pos: frame.from.pos,
             inHome: frame.from.inHome,
@@ -105,6 +122,68 @@ class DynamicPiecesPainter extends CustomPainter {
           }
         }
 
+        if (capturedPiece != null &&
+            captureFrame.phase != CapturePresentationPhase.complete) {
+          final capturedDisplayPiece = piece.copyWith(
+            pos: capturedPiece.from.pos,
+            inHome: capturedPiece.from.inHome,
+          );
+          final basePiece = piece.copyWith(
+            pos: LudoRules.basePosition,
+            inHome: false,
+          );
+          final captureCenter = _pieceCenter(
+            piece: capturedDisplayPiece,
+            playerIndex: playerIndex,
+          );
+          final baseCenter = _pieceCenter(
+            piece: basePiece,
+            playerIndex: playerIndex,
+          );
+
+          if (captureCenter != null && baseCenter != null) {
+            displayPiece = capturedDisplayPiece;
+            isMotionActive = true;
+            elevation = 0;
+
+            switch (captureFrame.phase) {
+              case CapturePresentationPhase.approaching:
+                groundCenter = captureCenter;
+                animationGroupKey =
+                    'capture_${captureCenter.dx.round()}_${captureCenter.dy.round()}';
+                break;
+              case CapturePresentationPhase.impact:
+                groundCenter = captureCenter.translate(
+                  captureFrame.impactShake * cellSize * 0.075,
+                  0,
+                );
+                animationGroupKey =
+                    'capture_${captureCenter.dx.round()}_${captureCenter.dy.round()}';
+                motionScale = 1 - captureFrame.impactPulse * 0.12;
+                rotation = captureFrame.impactShake * 0.08;
+                break;
+              case CapturePresentationPhase.returning:
+                groundCenter = Offset.lerp(
+                  captureCenter,
+                  baseCenter,
+                  captureFrame.returnProgress,
+                );
+                animationGroupKey =
+                    'return_${capturedPiece.playerId}_${capturedPiece.pieceId}';
+                break;
+              case CapturePresentationPhase.complete:
+                break;
+            }
+          }
+        }
+
+        if (isSharedMoving &&
+            captureFrame.phase == CapturePresentationPhase.impact) {
+          motionScale *= 1 + captureFrame.impactPulse * 0.10;
+          isMotionActive = true;
+          animationGroupKey = 'attacker_${activeMove.playerId}_${piece.id}';
+        }
+
         groundCenter ??= _pieceCenter(
           piece: displayPiece,
           playerIndex: playerIndex,
@@ -119,10 +198,12 @@ class DynamicPiecesPainter extends CustomPainter {
             piece: displayPiece,
             isCurrentPlayer: isCurrentPlayer,
             isSharedMoving: isMotionActive,
+            animationGroupKey: animationGroupKey,
             center: center,
             groundCenter: groundCenter,
             elevation: elevation,
             motionScale: motionScale,
+            rotation: rotation,
             colorBright: style.bright,
             colorDark: style.dark,
           ),
@@ -133,14 +214,27 @@ class DynamicPiecesPainter extends CustomPainter {
     final groupedPieces = <String, List<DrawablePiece>>{};
 
     for (final drawable in drawables) {
-      final key = drawable.isSharedMoving
-          ? 'moving_${drawable.playerId}_${drawable.piece.id}'
-          : '${drawable.groundCenter.dx.round()}_${drawable.groundCenter.dy.round()}';
+      final key =
+          drawable.animationGroupKey ??
+          '${drawable.groundCenter.dx.round()}_${drawable.groundCenter.dy.round()}';
       groupedPieces.putIfAbsent(key, () => <DrawablePiece>[]);
       groupedPieces[key]!.add(drawable);
     }
 
-    for (final group in groupedPieces.values) {
+    _drawCaptureImpact(
+      canvas: canvas,
+      activeMove: activeMove,
+      frame: captureFrame,
+      cellSize: cellSize,
+    );
+
+    final groups = groupedPieces.values.toList(growable: false);
+    final orderedGroups = <List<DrawablePiece>>[
+      ...groups.where((group) => !_containsAttacker(group, activeMove)),
+      ...groups.where((group) => _containsAttacker(group, activeMove)),
+    ];
+
+    for (final group in orderedGroups) {
       group.sort((a, b) {
         if (a.isSharedMoving != b.isSharedMoving) {
           return a.isSharedMoving ? 1 : -1;
@@ -178,6 +272,13 @@ class DynamicPiecesPainter extends CustomPainter {
           );
         }
 
+        if (drawable.rotation != 0) {
+          canvas.save();
+          canvas.translate(center.dx, center.dy);
+          canvas.rotate(drawable.rotation);
+          canvas.translate(-center.dx, -center.dy);
+        }
+
         LudoPiecePainter.draw(
           canvas: canvas,
           center: center,
@@ -188,6 +289,8 @@ class DynamicPiecesPainter extends CustomPainter {
           scale: (group.length > 1 ? 0.84 : 1.0) * drawable.motionScale,
           elevation: drawable.elevation,
         );
+
+        if (drawable.rotation != 0) canvas.restore();
       }
     }
 
@@ -204,6 +307,82 @@ class DynamicPiecesPainter extends CustomPainter {
       coords: coords,
       piece: piece,
       playerIndex: playerIndex,
+    );
+  }
+
+  ActiveMoveCapture? _capturedPiece(
+    List<ActiveMoveCapture> capturedPieces,
+    String playerId,
+    int pieceId,
+  ) {
+    for (final captured in capturedPieces) {
+      if (captured.playerId == playerId && captured.pieceId == pieceId) {
+        return captured;
+      }
+    }
+    return null;
+  }
+
+  bool _containsAttacker(List<DrawablePiece> group, ActiveMove? activeMove) {
+    if (activeMove == null) return false;
+    return group.any(
+      (drawable) =>
+          drawable.playerId == activeMove.playerId &&
+          drawable.piece.id == activeMove.pieceId,
+    );
+  }
+
+  void _drawCaptureImpact({
+    required Canvas canvas,
+    required ActiveMove? activeMove,
+    required CapturePresentationFrame frame,
+    required double cellSize,
+  }) {
+    if (activeMove == null ||
+        activeMove.capturedPieces.isEmpty ||
+        frame.phase != CapturePresentationPhase.impact) {
+      return;
+    }
+
+    final captured = activeMove.capturedPieces.first;
+    final playerIndex =
+        game!.playerSeats[captured.playerId] ??
+        game!.players.indexOf(captured.playerId);
+    if (playerIndex < 0) return;
+
+    final capturedPiece = LudoPiece(
+      id: captured.pieceId,
+      pos: captured.from.pos,
+      inHome: captured.from.inHome,
+    );
+    final center = _pieceCenter(piece: capturedPiece, playerIndex: playerIndex);
+    if (center == null) return;
+
+    final attackerIndex =
+        game!.playerSeats[activeMove.playerId] ??
+        game!.players.indexOf(activeMove.playerId);
+    final colorId = attackerIndex >= 0 && seatColorIds.length > attackerIndex
+        ? seatColorIds[attackerIndex]
+        : LudoPalette.defaultForSeat(attackerIndex.clamp(0, 3));
+    final color = LudoPalette.style(colorId).bright;
+    final progress = frame.impactProgress;
+    final opacity = (1 - progress) * 0.75;
+    final radius = cellSize * (0.28 + progress * 0.72);
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = color.withOpacity(opacity * 0.16)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = color.withOpacity(opacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = cellSize * 0.07,
     );
   }
 

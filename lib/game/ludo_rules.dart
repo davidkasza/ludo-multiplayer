@@ -183,6 +183,7 @@ class LudoRules {
     }
 
     var didCapture = false;
+    final capturedPieces = <ActiveMoveCapture>[];
     for (final opponentId in players) {
       if (opponentId == movingPlayerId) continue;
       final opponentSeat = _seatFor(players, playerSeats, opponentId);
@@ -196,10 +197,21 @@ class LudoRules {
         );
         if (globalPosition != globalDestination) return piece;
         didCapture = true;
+        capturedPieces.add(
+          ActiveMoveCapture(
+            playerId: opponentId,
+            pieceId: piece.id,
+            from: ActiveMoveStep(pos: piece.pos, inHome: piece.inHome),
+          ),
+        );
         return piece.copyWith(pos: basePosition, inHome: false);
       }).toList();
     }
-    return CaptureResult(pieces: updated, didCapture: didCapture);
+    return CaptureResult(
+      pieces: updated,
+      didCapture: didCapture,
+      capturedPieces: capturedPieces,
+    );
   }
 
   static bool needsLegacyActionRecovery(LudoGame game) {
@@ -231,8 +243,13 @@ class LudoRules {
 class CaptureResult {
   final Map<String, List<LudoPiece>> pieces;
   final bool didCapture;
+  final List<ActiveMoveCapture> capturedPieces;
 
-  const CaptureResult({required this.pieces, required this.didCapture});
+  const CaptureResult({
+    required this.pieces,
+    required this.didCapture,
+    this.capturedPieces = const <ActiveMoveCapture>[],
+  });
 }
 
 class NoValidMoveTurn {

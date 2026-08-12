@@ -53,18 +53,20 @@ void main() {
 
     test('base and start coordinates exist for every player seat', () {
       for (var seat = 0; seat < 4; seat++) {
-        final base = LudoBoardMapper.getPieceCanvasCoords(
-          piece: const LudoPiece(id: 1, pos: -1, inHome: false),
-          playerIndex: seat,
-        );
-        final start = LudoBoardMapper.getPieceCanvasCoords(
-          piece: const LudoPiece(id: 1, pos: 0, inHome: false),
-          playerIndex: seat,
-        );
+        for (var pieceId = 1; pieceId <= 4; pieceId++) {
+          final base = LudoBoardMapper.getPieceCanvasCoords(
+            piece: LudoPiece(id: pieceId, pos: -1, inHome: false),
+            playerIndex: seat,
+          );
+          final start = LudoBoardMapper.getPieceCanvasCoords(
+            piece: LudoPiece(id: pieceId, pos: 0, inHome: false),
+            playerIndex: seat,
+          );
 
-        expect(base, isNotNull);
-        expect(start, isNotNull);
-        expect(base, isNot(start));
+          expect(base, isNotNull);
+          expect(start, isNotNull);
+          expect(base, isNot(start));
+        }
       }
     });
 

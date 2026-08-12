@@ -77,16 +77,6 @@ mixin LudoMovementMixin on ChangeNotifier {
         if (steps.length < 2) return null;
         final destination = steps.last;
         final nextVersion = latest.turnVersion + 1;
-        final activeMove = ActiveMove(
-          actionId: actionId,
-          turnVersion: nextVersion,
-          playerId: playerId,
-          pieceId: pieceId,
-          startedAt: estimatedServerNow.millisecondsSinceEpoch,
-          stepDurationMs: 250,
-          steps: steps,
-          stateApplied: true,
-        );
 
         final movedPieces = <String, List<LudoPiece>>{
           for (final entry in latest.pieces.entries)
@@ -110,6 +100,17 @@ mixin LudoMovementMixin on ChangeNotifier {
           players: latest.players,
           movingPlayerId: playerId,
           destination: destination,
+        );
+        final activeMove = ActiveMove(
+          actionId: actionId,
+          turnVersion: nextVersion,
+          playerId: playerId,
+          pieceId: pieceId,
+          startedAt: estimatedServerNow.millisecondsSinceEpoch,
+          stepDurationMs: 250,
+          steps: steps,
+          capturedPieces: capture.capturedPieces,
+          stateApplied: true,
         );
         final didReachGoal = LudoRules.reachesGoal(target, destination);
         final playerFinished = LudoRules.hasCompletedAllPieces(

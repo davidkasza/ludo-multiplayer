@@ -130,11 +130,13 @@ class LudoController extends ChangeNotifier
         final elapsedMs = committedAt == null
             ? 0
             : estimatedServerNow.difference(committedAt).inMilliseconds;
+        final presentationDurationMs =
+            LudoPresentation.movePresentationDurationMs(remoteMove);
         final visualElapsedMs = elapsedMs
-            .clamp(0, remoteMove.totalDurationMs)
+            .clamp(0, presentationDurationMs)
             .toInt();
-        final remainingMs = (remoteMove.totalDurationMs - visualElapsedMs)
-            .clamp(0, remoteMove.totalDurationMs)
+        final remainingMs = (presentationDurationMs - visualElapsedMs)
+            .clamp(0, presentationDurationMs)
             .toInt();
         if (remainingMs == 0) {
           _visualActiveMoveClearTimer = null;
@@ -404,6 +406,18 @@ class LudoController extends ChangeNotifier
         game!.status == 'playing' &&
         !isDicePresentationActive &&
         visualActiveMove == null;
+  }
+
+  bool get canSelectPiece {
+    final currentGame = game;
+    return LudoPresentation.canSelectPiece(
+      isPlaying: currentGame?.status == 'playing',
+      isAuthoritativeTurn: isMyTurn,
+      hasRolled: currentGame?.hasRolled == true,
+      isWaitingForMove: currentGame?.turnPhase == LudoGame.waitingForMove,
+      isDiceRolling: isDiceRolling,
+      hasActiveMovePresentation: visualActiveMove != null,
+    );
   }
 
   bool get isHost {
