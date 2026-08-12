@@ -100,7 +100,7 @@ mixin LudoProgressionMixin on ChangeNotifier {
       final placementIndex = ranking.indexOf(currentUser.uid);
       if (placementIndex < 0) return null;
 
-      return _claimProgression(
+      return await _claimProgression(
         matchId: matchId,
         data: _ProgressionMatchData(
           placement: placementIndex + 1,
