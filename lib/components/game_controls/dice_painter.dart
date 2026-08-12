@@ -7,17 +7,33 @@ class DicePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.black87
+    final shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.20)
+      ..style = PaintingStyle.fill;
+    final pipPaint = Paint()
+      ..color = const Color(0xff111827)
+      ..style = PaintingStyle.fill;
+    final highlightPaint = Paint()
+      ..color = Colors.white.withOpacity(0.18)
       ..style = PaintingStyle.fill;
 
-    final r = size.width * 0.11;
-    final p1 = size.width * 0.25;
+    final r = size.width * 0.095;
+    final p1 = size.width * 0.27;
     final p2 = size.width * 0.5;
-    final p3 = size.width * 0.75;
+    final p3 = size.width * 0.73;
 
     void drawDot(double x, double y) {
-      canvas.drawCircle(Offset(x, y), r, paint);
+      canvas.drawCircle(
+        Offset(x + size.width * 0.018, y + size.width * 0.024),
+        r,
+        shadowPaint,
+      );
+      canvas.drawCircle(Offset(x, y), r, pipPaint);
+      canvas.drawCircle(
+        Offset(x - r * 0.28, y - r * 0.30),
+        r * 0.28,
+        highlightPaint,
+      );
     }
 
     if (value.isOdd) drawDot(p2, p2);

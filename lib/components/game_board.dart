@@ -67,7 +67,7 @@ class GameBoard extends StatelessWidget {
                         child: AnimatedBuilder(
                           animation: Listenable.merge([
                             controller,
-                            controller.hopFrameNotifier,
+                            controller.moveAnimationFrameNotifier,
                           ]),
                           builder: (context, _) {
                             return CustomPaint(
@@ -79,8 +79,8 @@ class GameBoard extends StatelessWidget {
                                 isMyTurn:
                                     controller.isMyTurn &&
                                     !controller.isDicePresentationActive,
-                                hopFrame:
-                                controller.hopFrameNotifier.value,
+                                animationFrame:
+                                    controller.moveAnimationFrameNotifier.value,
                                 visualActiveMove:
                                 controller.visualActiveMove,
                                 visualMoveElapsedMs:

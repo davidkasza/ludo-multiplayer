@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../config/progression_config.dart';
 import '../game/classic_board.dart';
@@ -74,15 +75,18 @@ class LudoController extends ChangeNotifier
   bool isDiceRolling = false;
   String? diceRollingPlayerId;
   int? visualDiceValue;
+  double diceRollInitialProgress = 0;
+  int diceRollDurationMs = 800;
 
   Timer? _diceRollAnimationTimer;
   Timer? _diceResultHoldTimer;
   String? _lastSeenDiceRollKey;
   String? _animatingDiceRollKey;
 
-  final ValueNotifier<double> hopFrameNotifier = ValueNotifier<double>(0.0);
+  final ValueNotifier<double> moveAnimationFrameNotifier =
+      ValueNotifier<double>(0.0);
 
-  Timer? hopTimer;
+  Ticker? _moveAnimationTicker;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? gameSubscription;
 
   ActiveMove? visualActiveMove;
@@ -135,8 +139,7 @@ class LudoController extends ChangeNotifier
         if (remainingMs == 0) {
           _visualActiveMoveClearTimer = null;
           visualActiveMove = null;
-          hopTimer?.cancel();
-          hopTimer = null;
+          _moveAnimationTicker?.stop();
           notifyListeners();
           syncBotTurn();
           return;
@@ -144,7 +147,7 @@ class LudoController extends ChangeNotifier
         visualActiveMove = remoteMove;
         _visualActiveMoveStartedLocallyAt =
             DateTime.now().millisecondsSinceEpoch - visualElapsedMs;
-        startHopAnimation();
+        _startMoveAnimationTicker();
         _visualActiveMoveClearTimer = Timer(
           Duration(milliseconds: remainingMs + 120),
           _clearVisualActiveMove,
@@ -163,8 +166,7 @@ class LudoController extends ChangeNotifier
     _visualActiveMoveClearTimer = null;
     visualActiveMove = null;
     _visualActiveMoveStartedLocallyAt = 0;
-    hopTimer?.cancel();
-    hopTimer = null;
+    _moveAnimationTicker?.stop();
     notifyListeners();
     syncBotTurn();
   }
@@ -195,9 +197,13 @@ class LudoController extends ChangeNotifier
     final elapsedMs = committedAt == null
         ? 0
         : estimatedServerNow.difference(committedAt).inMilliseconds;
+    diceRollDurationMs = remoteRoll.durationMs > 0
+        ? remoteRoll.durationMs
+        : 800;
+    diceRollInitialProgress = (elapsedMs / diceRollDurationMs).clamp(0.0, 1.0);
     final frame = LudoPresentation.diceFrame(
       elapsedMs: elapsedMs,
-      rollDurationMs: remoteRoll.durationMs,
+      rollDurationMs: diceRollDurationMs,
     );
 
     switch (frame.phase) {
@@ -247,6 +253,8 @@ class LudoController extends ChangeNotifier
     _animatingDiceRollKey = null;
     diceRollingPlayerId = null;
     visualDiceValue = null;
+    diceRollInitialProgress = 0;
+    diceRollDurationMs = 800;
     isDiceRolling = false;
     notifyListeners();
     syncBotTurn();
@@ -263,6 +271,8 @@ class LudoController extends ChangeNotifier
     _animatingDiceRollKey = null;
     diceRollingPlayerId = null;
     visualDiceValue = null;
+    diceRollInitialProgress = 0;
+    diceRollDurationMs = 800;
     isDiceRolling = false;
 
     if (hadAnimation) notifyListeners();
@@ -303,22 +313,23 @@ class LudoController extends ChangeNotifier
     );
   }
 
-  void startHopAnimation() {
-    if (hopTimer?.isActive == true) return;
-    hopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+  void _startMoveAnimationTicker() {
+    _moveAnimationTicker ??= Ticker((_) {
       if (visualActiveMove != null) {
-        hopFrameNotifier.value += 0.2;
+        moveAnimationFrameNotifier.value += 1;
       } else {
-        timer.cancel();
-        hopTimer = null;
+        _moveAnimationTicker?.stop();
       }
     });
+    if (_moveAnimationTicker?.isActive != true) {
+      _moveAnimationTicker?.start();
+    }
   }
 
   @override
   void dispose() {
     disposeAuth();
-    hopTimer?.cancel();
+    _moveAnimationTicker?.dispose();
     gameSubscription?.cancel();
     _visualActiveMoveClearTimer?.cancel();
     _diceRollAnimationTimer?.cancel();
@@ -328,7 +339,7 @@ class LudoController extends ChangeNotifier
     stopRoomHeartbeat();
     stopChatTracking();
     cancelBotTurn();
-    hopFrameNotifier.dispose();
+    moveAnimationFrameNotifier.dispose();
     turnSecondsNotifier.dispose();
     super.dispose();
   }
@@ -355,6 +366,8 @@ class LudoController extends ChangeNotifier
   }
 
   bool get isDicePresentationActive => diceRollingPlayerId != null;
+
+  String? get diceAnimationKey => _animatingDiceRollKey;
 
   bool get isShowingDiceResult => isDicePresentationActive && !isDiceRolling;
 

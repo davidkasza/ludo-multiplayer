@@ -11,19 +11,24 @@ class LudoPiecePainter {
     required double cellSize,
     required bool isAtGoal,
     required double scale,
+    required double elevation,
   }) {
     final double scaledCell = cellSize * scale;
+    final elevationRatio = (elevation / (cellSize * 0.45)).clamp(0.0, 1.0);
+    final shadowWidth = scaledCell * 0.68 * (1 - elevationRatio * 0.24);
 
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(
-          center.dx,
-          center.dy + scaledCell * 0.34,
-        ),
-        width: scaledCell * 0.68,
+        center: Offset(center.dx, center.dy + elevation + scaledCell * 0.34),
+        width: shadowWidth,
         height: scaledCell * 0.20,
       ),
-      Paint()..color = Colors.black.withOpacity(0.30),
+      Paint()
+        ..color = Colors.black.withOpacity(0.30 - elevationRatio * 0.12)
+        ..maskFilter = MaskFilter.blur(
+          BlurStyle.normal,
+          1.4 + elevationRatio * 1.8,
+        ),
     );
 
     if (isAtGoal) {

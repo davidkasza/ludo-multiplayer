@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../../game/classic_board.dart';
+import '../../game/ludo_animation.dart';
 import '../../game/ludo_board_mapper.dart';
 import '../../game/ludo_palette.dart';
 import '../../game/ludo_rules.dart';
@@ -16,7 +17,7 @@ class DynamicPiecesPainter extends CustomPainter {
   final String? currentUserId;
   final int myPlayerIndex;
   final bool isMyTurn;
-  final double hopFrame;
+  final double animationFrame;
   final ActiveMove? visualActiveMove;
   final int visualMoveElapsedMs;
   final List<String> seatColorIds;
@@ -26,7 +27,7 @@ class DynamicPiecesPainter extends CustomPainter {
     required this.currentUserId,
     required this.myPlayerIndex,
     required this.isMyTurn,
-    required this.hopFrame,
+    required this.animationFrame,
     required this.visualActiveMove,
     required this.visualMoveElapsedMs,
     required this.seatColorIds,
@@ -63,30 +64,53 @@ class DynamicPiecesPainter extends CustomPainter {
             activeMove.playerId == playerId &&
             activeMove.pieceId == piece.id;
 
-        final LudoPiece displayPiece;
+        LudoPiece displayPiece = piece;
+        Offset? groundCenter;
+        var elevation = 0.0;
+        var motionScale = 1.0;
+        var isMotionActive = false;
 
         if (isSharedMoving) {
-          final activeStep = activeMove.stepAtElapsed(visualMoveElapsedMs);
-          displayPiece = piece.copyWith(
-            pos: activeStep.pos,
-            inHome: activeStep.inHome,
+          final frame = LudoAnimation.pieceFrame(
+            activeMove,
+            visualMoveElapsedMs,
           );
-        } else {
-          displayPiece = piece;
+          isMotionActive = !frame.isComplete;
+          final fromPiece = piece.copyWith(
+            pos: frame.from.pos,
+            inHome: frame.from.inHome,
+          );
+          final toPiece = piece.copyWith(
+            pos: frame.to.pos,
+            inHome: frame.to.inHome,
+          );
+          final fromCenter = _pieceCenter(
+            piece: fromPiece,
+            playerIndex: playerIndex,
+          );
+          final toCenter = _pieceCenter(
+            piece: toPiece,
+            playerIndex: playerIndex,
+          );
+          if (fromCenter != null && toCenter != null) {
+            groundCenter = Offset.lerp(
+              fromCenter,
+              toCenter,
+              frame.easedProgress,
+            );
+            final hopAmount = sin(frame.hopProgress * pi);
+            elevation = hopAmount * cellSize * 0.34;
+            motionScale += hopAmount * 0.035;
+            displayPiece = frame.isComplete ? toPiece : fromPiece;
+          }
         }
 
-        final coords = LudoBoardMapper.getPieceCanvasCoords(
+        groundCenter ??= _pieceCenter(
           piece: displayPiece,
           playerIndex: playerIndex,
         );
-
-        if (coords == null) continue;
-
-        final center = _resolvePieceCenter(
-          coords: coords,
-          piece: displayPiece,
-          playerIndex: playerIndex,
-        );
+        if (groundCenter == null) continue;
+        final center = groundCenter.translate(0, -elevation);
 
         drawables.add(
           DrawablePiece(
@@ -94,8 +118,11 @@ class DynamicPiecesPainter extends CustomPainter {
             playerIndex: playerIndex,
             piece: displayPiece,
             isCurrentPlayer: isCurrentPlayer,
-            isSharedMoving: isSharedMoving,
+            isSharedMoving: isMotionActive,
             center: center,
+            groundCenter: groundCenter,
+            elevation: elevation,
+            motionScale: motionScale,
             colorBright: style.bright,
             colorDark: style.dark,
           ),
@@ -106,7 +133,9 @@ class DynamicPiecesPainter extends CustomPainter {
     final groupedPieces = <String, List<DrawablePiece>>{};
 
     for (final drawable in drawables) {
-      final key = '${drawable.center.dx.round()}_${drawable.center.dy.round()}';
+      final key = drawable.isSharedMoving
+          ? 'moving_${drawable.playerId}_${drawable.piece.id}'
+          : '${drawable.groundCenter.dx.round()}_${drawable.groundCenter.dy.round()}';
       groupedPieces.putIfAbsent(key, () => <DrawablePiece>[]);
       groupedPieces[key]!.add(drawable);
     }
@@ -132,17 +161,6 @@ class DynamicPiecesPainter extends CustomPainter {
               cellSize: cellSize,
             );
 
-        final isStillMoving = drawable.isSharedMoving &&
-            visualActiveMove != null &&
-            visualMoveElapsedMs < visualActiveMove!.totalDurationMs;
-
-        if (isStillMoving) {
-          center = Offset(
-            center.dx,
-            center.dy - sin(hopFrame).abs() * (cellSize * 0.45),
-          );
-        }
-
         final isAtGoal = drawable.piece.inHome && drawable.piece.pos == 5;
 
         final isSelectable = drawable.isCurrentPlayer &&
@@ -167,12 +185,26 @@ class DynamicPiecesPainter extends CustomPainter {
           dark: drawable.colorDark,
           cellSize: cellSize,
           isAtGoal: isAtGoal,
-          scale: group.length > 1 ? 0.84 : 1.0,
+          scale: (group.length > 1 ? 0.84 : 1.0) * drawable.motionScale,
+          elevation: drawable.elevation,
         );
       }
     }
 
     canvas.restore();
+  }
+
+  Offset? _pieceCenter({required LudoPiece piece, required int playerIndex}) {
+    final coords = LudoBoardMapper.getPieceCanvasCoords(
+      piece: piece,
+      playerIndex: playerIndex,
+    );
+    if (coords == null) return null;
+    return _resolvePieceCenter(
+      coords: coords,
+      piece: piece,
+      playerIndex: playerIndex,
+    );
   }
 
   Offset _resolvePieceCenter({
@@ -232,7 +264,7 @@ class DynamicPiecesPainter extends CustomPainter {
         oldDelegate.currentUserId != currentUserId ||
         oldDelegate.myPlayerIndex != myPlayerIndex ||
         oldDelegate.isMyTurn != isMyTurn ||
-        oldDelegate.hopFrame != hopFrame ||
+        oldDelegate.animationFrame != animationFrame ||
         oldDelegate.visualActiveMove != visualActiveMove ||
         oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs ||
         !_sameColors(oldDelegate.seatColorIds, seatColorIds);

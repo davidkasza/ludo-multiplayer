@@ -1,18 +1,23 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 
+import '../../game/ludo_animation.dart';
 import 'dice_painter.dart';
 
 class RollingDiceUI extends StatefulWidget {
   final int value;
   final bool isRolling;
+  final String? animationKey;
+  final double initialProgress;
+  final Duration rollDuration;
   final double size;
 
   const RollingDiceUI({
     super.key,
     required this.value,
     required this.isRolling,
+    required this.animationKey,
+    required this.initialProgress,
+    required this.rollDuration,
     this.size = 38.0,
   });
 
@@ -30,20 +35,32 @@ class _RollingDiceUIState extends State<RollingDiceUI>
 
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: widget.rollDuration,
     );
-    if (widget.isRolling) _animController.repeat();
+    if (widget.isRolling) _startRoll();
   }
 
   @override
   void didUpdateWidget(covariant RollingDiceUI oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (widget.isRolling && !oldWidget.isRolling) {
-      _animController.repeat();
+    if (widget.isRolling &&
+        (!oldWidget.isRolling ||
+            oldWidget.animationKey != widget.animationKey)) {
+      _startRoll();
     } else if (!widget.isRolling && oldWidget.isRolling) {
       _animController.stop();
       _animController.value = 0.0;
+    }
+  }
+
+  void _startRoll() {
+    _animController
+      ..stop()
+      ..duration = widget.rollDuration
+      ..value = widget.initialProgress.clamp(0.0, 1.0);
+    if (_animController.value < 1) {
+      _animController.forward();
     }
   }
 
@@ -58,41 +75,86 @@ class _RollingDiceUIState extends State<RollingDiceUI>
     return AnimatedBuilder(
       animation: _animController,
       builder: (context, child) {
-        final animValue = widget.isRolling ? _animController.value : 0.0;
-        final displayValue = widget.isRolling
-            ? ((animValue * 30).floor() % 6) + 1
-            : widget.value == 0
-            ? 6
-            : widget.value;
-        final angleX = widget.isRolling ? animValue * pi * 4 : 0.0;
-        final angleY = widget.isRolling ? animValue * pi * 2 : 0.0;
-        final angleZ = widget.isRolling ? animValue * pi * 2 : 0.0;
-        final elevation = widget.isRolling ? sin(animValue * pi) : 0.0;
-        final jumpY = -elevation * 35.0;
+        final result = widget.value >= 1 && widget.value <= 6
+            ? widget.value
+            : 6;
+        final motion = widget.isRolling
+            ? LudoAnimation.diceFrame(_animController.value, result)
+            : LudoAnimation.diceFrame(1, result);
+        final jumpY = -motion.lift * widget.size * 0.78;
 
-        return Transform(
-          transform: Matrix4.identity()
-            ..setEntry(3, 2, 0.003)
-            ..translate(0.0, jumpY, 0.0)
-            ..rotateX(angleX)
-            ..rotateY(angleY)
-            ..rotateZ(angleZ),
-          alignment: Alignment.center,
-          child: Container(
-            width: widget.size,
-            height: widget.size,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(widget.size * 0.15),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.4),
-                  blurRadius: 6.0 + elevation * 8,
-                  offset: Offset(0, 4.0 + elevation * 12),
+        return SizedBox.square(
+          dimension: widget.size,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Transform.translate(
+                offset: Offset(
+                  motion.horizontalDrift * widget.size,
+                  widget.size * 0.43,
                 ),
-              ],
-            ),
-            child: CustomPaint(painter: DicePainter(displayValue)),
+                child: Transform.scale(
+                  scaleX: motion.shadowScale,
+                  scaleY: 0.42,
+                  child: Container(
+                    width: widget.size * 0.78,
+                    height: widget.size * 0.22,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(motion.shadowOpacity),
+                      borderRadius: BorderRadius.circular(widget.size),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(
+                            motion.shadowOpacity * 0.55,
+                          ),
+                          blurRadius: widget.size * 0.16,
+                          spreadRadius: widget.size * 0.025,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Transform.translate(
+                offset: Offset(motion.horizontalDrift * widget.size, jumpY),
+                child: Transform.scale(
+                  scale: motion.scale,
+                  child: Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()
+                      ..setEntry(3, 2, 0.0035)
+                      ..rotateX(motion.rotationX)
+                      ..rotateY(motion.rotationY)
+                      ..rotateZ(motion.rotationZ),
+                    child: Container(
+                      width: widget.size,
+                      height: widget.size,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Colors.white, Color(0xffe5e7eb)],
+                        ),
+                        borderRadius: BorderRadius.circular(widget.size * 0.18),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.78),
+                          width: 1.1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.24),
+                            blurRadius: widget.size * 0.10,
+                            offset: Offset(0, widget.size * 0.06),
+                          ),
+                        ],
+                      ),
+                      child: CustomPaint(painter: DicePainter(motion.face)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },

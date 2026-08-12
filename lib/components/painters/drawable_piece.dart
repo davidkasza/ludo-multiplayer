@@ -9,6 +9,9 @@ class DrawablePiece {
   final bool isCurrentPlayer;
   final bool isSharedMoving;
   final Offset center;
+  final Offset groundCenter;
+  final double elevation;
+  final double motionScale;
   final Color colorBright;
   final Color colorDark;
 
@@ -19,6 +22,9 @@ class DrawablePiece {
     required this.isCurrentPlayer,
     required this.isSharedMoving,
     required this.center,
+    required this.groundCenter,
+    required this.elevation,
+    required this.motionScale,
     required this.colorBright,
     required this.colorDark,
   });

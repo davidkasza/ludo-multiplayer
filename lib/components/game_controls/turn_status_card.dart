@@ -145,6 +145,9 @@ class TurnStatusCard extends StatelessWidget {
             child: RollingDiceUI(
               value: c.visualDiceValue ?? game?.diceValue ?? 0,
               isRolling: c.isDiceRolling,
+              animationKey: c.diceAnimationKey,
+              initialProgress: c.diceRollInitialProgress,
+              rollDuration: Duration(milliseconds: c.diceRollDurationMs),
               size: 42,
             ),
           ),
