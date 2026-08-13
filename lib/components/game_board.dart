@@ -3,8 +3,9 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../controllers/ludo_controller.dart';
-import '../game/ludo_board_geometry_resolver.dart';
 import '../game/ludo_board_mapper.dart';
+import '../game/ludo_board_theme.dart';
+import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
 import 'painters/board_painters.dart';
 
@@ -19,10 +20,14 @@ class GameBoard extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final geometry = LudoBoardGeometryResolver.resolve(
+        final boardTheme = LudoBoardThemeResolver.resolve(
           controller.game?.boardId,
         );
+        final geometry = boardTheme.geometry;
         final boardMapper = LudoBoardMapper(geometry: geometry);
+        final activeSeats = LudoGame.seatLayoutForMaxPlayers(
+          controller.game?.maxPlayers ?? 4,
+        ).toSet();
         final boardSize = min(
           maxBoardSize,
           min(constraints.maxWidth, constraints.maxHeight),
@@ -54,9 +59,9 @@ class GameBoard extends StatelessWidget {
                       child: RepaintBoundary(
                         child: CustomPaint(
                           size: Size.square(boardSize),
-                          painter: StaticBoardPainter(
-                            seatColorIds: controller.seatColorIds,
-                            geometry: geometry,
+                          painter: _staticPainter(
+                            boardTheme: boardTheme,
+                            activeSeats: activeSeats,
                           ),
                         ),
                       ),
@@ -97,6 +102,25 @@ class GameBoard extends StatelessWidget {
         );
       },
     );
+  }
+
+  CustomPainter _staticPainter({
+    required LudoBoardThemeDefinition boardTheme,
+    required Set<int> activeSeats,
+  }) {
+    switch (boardTheme.skin) {
+      case LudoBoardSkin.classic:
+        return StaticBoardPainter(
+          seatColorIds: controller.seatColorIds,
+          geometry: boardTheme.geometry,
+        );
+      case LudoBoardSkin.auroraCircuit:
+        return AuroraCircuitBoardPainter(
+          seatColorIds: controller.seatColorIds,
+          geometry: boardTheme.geometry,
+          activeSeats: activeSeats,
+        );
+    }
   }
 
   void _handleTap(

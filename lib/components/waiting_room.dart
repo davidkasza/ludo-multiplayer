@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../controllers/ludo_controller.dart';
+import '../game/ludo_board_theme.dart';
 import '../game/ludo_palette.dart';
 import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
@@ -31,6 +32,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
 
   Timer? _settingsSaveTimer;
   String _draftRoomId = '';
+  String _draftBoardId = LudoBoardThemeResolver.classicId;
   int _draftMaxPlayers = 2;
   Map<int, String> _draftSeatTypes = const {
     0: LudoGame.humanSeat,
@@ -83,6 +85,9 @@ class _WaitingRoomState extends State<WaitingRoom> {
   }
 
   bool _remoteMatchesDraft(LudoGame game) {
+    if (LudoBoardThemeResolver.normalizeId(game.boardId) != _draftBoardId) {
+      return false;
+    }
     if (game.maxPlayers != _draftMaxPlayers) return false;
 
     final layout = LudoGame.seatLayoutForMaxPlayers(_draftMaxPlayers);
@@ -120,6 +125,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
     }
 
     _draftRoomId = controller.gameId;
+    _draftBoardId = LudoBoardThemeResolver.normalizeId(game.boardId);
     _draftMaxPlayers = game.maxPlayers;
     _draftSeatTypes = _normalizeSeatTypes(
       maxPlayers: game.maxPlayers,
@@ -136,6 +142,22 @@ class _WaitingRoomState extends State<WaitingRoom> {
         maxPlayers: _draftMaxPlayers,
         source: _draftSeatTypes,
       );
+      _draftRevision++;
+      _saveQueued = true;
+      _awaitingRemoteAck = false;
+    });
+
+    _scheduleSettingsSave();
+  }
+
+  void _changeBoard(String boardId) {
+    if (!controller.isHost) return;
+
+    final normalized = LudoBoardThemeResolver.normalizeId(boardId);
+    if (_draftBoardId == normalized) return;
+
+    setState(() {
+      _draftBoardId = normalized;
       _draftRevision++;
       _saveQueued = true;
       _awaitingRemoteAck = false;
@@ -185,6 +207,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
     }
 
     final revision = _draftRevision;
+    final boardId = _draftBoardId;
     final maxPlayers = _draftMaxPlayers;
     final seatTypes = Map<int, String>.from(_draftSeatTypes);
 
@@ -194,7 +217,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
     });
 
     final saved = await controller.updateWaitingRoomSettings(
-      selectedBoard: game.boardId,
+      selectedBoard: boardId,
       isTestMode: game.isTestModeActive,
       maxPlayers: maxPlayers,
       seatTypes: seatTypes,
@@ -209,6 +232,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
       if (!saved && revision == _draftRevision) {
         _awaitingRemoteAck = false;
         _saveQueued = false;
+        _draftBoardId = LudoBoardThemeResolver.normalizeId(game.boardId);
         _draftMaxPlayers = game.maxPlayers;
         _draftSeatTypes = _normalizeSeatTypes(
           maxPlayers: game.maxPlayers,
@@ -464,7 +488,9 @@ class _WaitingRoomState extends State<WaitingRoom> {
     required bool isHost,
     required bool hasHumanOpponentSeat,
   }) async {
-    var boardId = 'classic';
+    var boardId = isHost
+        ? _draftBoardId
+        : LudoBoardThemeResolver.normalizeId(game.boardId);
     var sandbox = game.isTestModeActive;
     var isPublic = game.isPublic && hasHumanOpponentSeat;
 
@@ -483,17 +509,10 @@ class _WaitingRoomState extends State<WaitingRoom> {
                     label: 'Board',
                     value: boardId,
                     enabled: isHost,
-                    items: const {
-                      'classic': 'Classic Map',
-                    },
+                    items: LudoBoardThemeResolver.selectionLabels,
                     onChanged: (value) {
                       setSheetState(() => boardId = value);
-                      _updateSettings(
-                        game: game,
-                        selectedBoard: value,
-                        isTestMode: sandbox,
-                        isPublic: isPublic,
-                      );
+                      _changeBoard(value);
                     },
                   ),
                   const SizedBox(height: 12),
@@ -1152,7 +1171,7 @@ class _ColourAndSettingsRow extends StatelessWidget {
             ? 0
             : controller.myPlayerIndex);
     final colour = LudoPalette.style(colourId);
-    const boardLabel = 'Classic';
+    final boardLabel = LudoBoardThemeResolver.displayNameFor(game.boardId);
     final visibilityLabel = game.isPublic ? 'Public' : 'Private';
     final sandboxLabel = game.isTestModeActive ? 'Sandbox on' : 'Normal mode';
 

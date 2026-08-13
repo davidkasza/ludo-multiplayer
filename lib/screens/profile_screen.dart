@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../components/cyber_background.dart';
 import '../controllers/ludo_controller.dart';
 import '../controllers/mixins/ludo_google_auth_mixin.dart';
+import '../game/ludo_board_theme.dart';
 import '../models/profile_models.dart';
 import '../theme/app_colors.dart';
 
@@ -1083,7 +1084,7 @@ class _HistoryRow extends StatelessWidget {
   }
 
   static String _boardName(String boardId) {
-    return 'Classic';
+    return LudoBoardThemeResolver.displayNameFor(boardId);
   }
 
   static String _formatDuration(Duration? duration) {

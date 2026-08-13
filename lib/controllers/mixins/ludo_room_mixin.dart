@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../config/progression_config.dart';
+import '../../game/ludo_board_theme.dart';
 import '../../game/ludo_palette.dart';
 import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
@@ -481,6 +482,7 @@ mixin LudoRoomMixin on ChangeNotifier {
     notifyListeners();
 
     final safeMaxPlayers = maxPlayers.clamp(2, 4).toInt();
+    final safeBoardId = LudoBoardThemeResolver.normalizeId(selectedBoard);
     final layout = LudoGame.seatLayoutForMaxPlayers(safeMaxPlayers);
     final normalizedSeatTypes = _normalizedSeatTypes(
       maxPlayers: safeMaxPlayers,
@@ -546,7 +548,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       'finishOrder': const <String>[],
       'startedAt': null,
       'finishedAt': null,
-      'boardId': 'classic',
+      'boardId': safeBoardId,
       'isTestModeActive': isTestMode,
       'maxPlayers': safeMaxPlayers,
       'opponentType': LudoGame.deriveOpponentType(
@@ -929,6 +931,7 @@ mixin LudoRoomMixin on ChangeNotifier {
     if (game!.status != 'waiting') return false;
 
     final safeMaxPlayers = maxPlayers.clamp(2, 4).toInt();
+    final safeBoardId = LudoBoardThemeResolver.normalizeId(selectedBoard);
     final newLayout = LudoGame.seatLayoutForMaxPlayers(safeMaxPlayers);
     final normalizedSeatTypes = _normalizedSeatTypes(
       maxPlayers: safeMaxPlayers,
@@ -1053,7 +1056,7 @@ mixin LudoRoomMixin on ChangeNotifier {
           'playerSeats': updatedPlayerSeats,
           'seatTypes': _seatTypesToFirestore(normalizedSeatTypes),
           'pieces': updatedPieces,
-          'boardId': 'classic',
+          'boardId': safeBoardId,
           'isTestModeActive': isTestMode,
           'maxPlayers': safeMaxPlayers,
           'opponentType': LudoGame.deriveOpponentType(

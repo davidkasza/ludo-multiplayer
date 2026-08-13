@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../game/ludo_board_theme.dart';
 import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
 import 'cyber_background.dart';
@@ -342,7 +343,8 @@ class _ResumeMatchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const boardLabel = 'Classic board';
+    final boardLabel =
+        '${LudoBoardThemeResolver.displayNameFor(game.boardId)} board';
     final stateLabel = game.status == 'waiting' ? 'Waiting room' : 'Match in progress';
 
     return Container(
