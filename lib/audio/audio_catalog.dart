@@ -111,6 +111,8 @@ abstract final class AudioCatalog {
         return MusicContext.auroraCircuit;
       case LudoBoardSkin.solarisTemple:
         return MusicContext.solarisTemple;
+      case LudoBoardSkin.nusantara:
+        return MusicContext.classic;
       case LudoBoardSkin.classic:
         return MusicContext.classic;
     }

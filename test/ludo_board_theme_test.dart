@@ -36,10 +36,15 @@ void main() {
         LudoBoardThemeResolver.resolve(' SOLARISTEMPLE '),
         same(LudoBoardThemeResolver.solarisTemple),
       );
+      expect(
+        LudoBoardThemeResolver.resolve(' NUSANTARA '),
+        same(LudoBoardThemeResolver.nusantara),
+      );
       expect(LudoBoardThemeResolver.selectionLabels, {
         'classic': 'Classic',
         'auroraCircuit': 'Aurora Circuit',
         'solarisTemple': 'Solaris Temple',
+        'nusantara': 'Nusantara',
       });
     });
 

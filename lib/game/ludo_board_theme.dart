@@ -1,7 +1,7 @@
 import 'classic_grid_geometry.dart';
 import 'ludo_board_geometry.dart';
 
-enum LudoBoardSkin { classic, auroraCircuit, solarisTemple }
+enum LudoBoardSkin { classic, auroraCircuit, solarisTemple, nusantara }
 
 class LudoBoardThemeDefinition {
   final String id;
@@ -25,6 +25,7 @@ abstract final class LudoBoardThemeResolver {
   static const String classicId = 'classic';
   static const String auroraCircuitId = 'auroraCircuit';
   static const String solarisTempleId = 'solarisTemple';
+  static const String nusantaraId = 'nusantara';
 
   static const LudoBoardThemeDefinition classic = LudoBoardThemeDefinition(
     id: classicId,
@@ -49,10 +50,18 @@ abstract final class LudoBoardThemeResolver {
         geometry: ClassicGridGeometry(),
       );
 
+  static const LudoBoardThemeDefinition nusantara = LudoBoardThemeDefinition(
+    id: nusantaraId,
+    displayName: 'Nusantara',
+    skin: LudoBoardSkin.nusantara,
+    geometry: ClassicGridGeometry(),
+  );
+
   static const List<LudoBoardThemeDefinition> availableThemes = [
     classic,
     auroraCircuit,
     solarisTemple,
+    nusantara,
   ];
 
   static LudoBoardThemeDefinition resolve(String? boardId) {
@@ -61,6 +70,8 @@ abstract final class LudoBoardThemeResolver {
         return auroraCircuit;
       case 'solaristemple':
         return solarisTemple;
+      case 'nusantara':
+        return nusantara;
       case 'classic':
       default:
         return classic;

@@ -16,6 +16,11 @@ void main() {
         AudioCatalog.musicContextForBoardId('solarisTemple'),
         MusicContext.solarisTemple,
       );
+      expect(
+        AudioCatalog.musicContextForBoardId('nusantara'),
+        MusicContext.classic,
+        reason: 'Nusantara safely reuses Classic music until it has a track',
+      );
 
       expect(
         AudioCatalog.musicAssetFor(MusicContext.menu),

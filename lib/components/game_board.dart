@@ -126,6 +126,12 @@ class GameBoard extends StatelessWidget {
           geometry: boardTheme.geometry,
           activeSeats: activeSeats,
         );
+      case LudoBoardSkin.nusantara:
+        return NusantaraBoardPainter(
+          seatColorIds: controller.seatColorIds,
+          geometry: boardTheme.geometry,
+          activeSeats: activeSeats,
+        );
     }
   }
 
