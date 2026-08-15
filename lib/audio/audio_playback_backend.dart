@@ -1,6 +1,26 @@
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 
 import 'audio_catalog.dart';
+
+/// Android playback policy for the app's two independent audio layers.
+///
+/// Background music owns normal long-lived audio focus. Gameplay effects use
+/// no focus request so Android mixes them into the existing game audio instead
+/// of sending a focus-loss event to the music player.
+abstract final class GameAudioContexts {
+  static const AudioContextAndroid musicAndroid = AudioContextAndroid(
+    contentType: AndroidContentType.music,
+    usageType: AndroidUsageType.media,
+    audioFocus: AndroidAudioFocus.gain,
+  );
+
+  static const AudioContextAndroid sfxAndroid = AudioContextAndroid(
+    contentType: AndroidContentType.sonification,
+    usageType: AndroidUsageType.game,
+    audioFocus: AndroidAudioFocus.none,
+  );
+}
 
 abstract interface class AudioPlaybackBackend {
   Future<void> playMusic(String assetPath, {required double volume});
@@ -27,9 +47,27 @@ abstract interface class AudioPlaybackBackend {
 class AudioplayersPlaybackBackend implements AudioPlaybackBackend {
   final AudioPlayer _musicPlayer = AudioPlayer();
   final AudioPlayer _sfxPlayer = AudioPlayer();
+  bool _androidContextsConfigured = false;
+
+  Future<void> _ensureAndroidAudioContexts() async {
+    if (_androidContextsConfigured ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+
+    await _musicPlayer.setAudioContext(
+      AudioContext(android: GameAudioContexts.musicAndroid),
+    );
+    await _sfxPlayer.setAudioContext(
+      AudioContext(android: GameAudioContexts.sfxAndroid),
+    );
+    _androidContextsConfigured = true;
+  }
 
   @override
   Future<void> playMusic(String assetPath, {required double volume}) async {
+    await _ensureAndroidAudioContexts();
     await _musicPlayer.setReleaseMode(ReleaseMode.loop);
     await _musicPlayer.play(
       AssetSource(AudioCatalog.sourcePathFor(assetPath)),
@@ -57,6 +95,7 @@ class AudioplayersPlaybackBackend implements AudioPlaybackBackend {
     required double volume,
     required Duration position,
   }) async {
+    await _ensureAndroidAudioContexts();
     await _sfxPlayer.stop();
     await _sfxPlayer.setReleaseMode(ReleaseMode.stop);
     await _sfxPlayer.play(

@@ -53,6 +53,43 @@ void main() {
     },
   );
 
+  for (final entry in const <String, MusicContext>{
+    'menu': MusicContext.menu,
+    'Classic': MusicContext.classic,
+    'Aurora': MusicContext.auroraCircuit,
+    'Solaris': MusicContext.solarisTemple,
+  }.entries) {
+    test(
+      '${entry.key} music continues naturally while dice SFX plays',
+      () async {
+        await controller.initialize();
+        await controller.setMusicContext(entry.value);
+        backend.advanceMusic(const Duration(seconds: 3));
+
+        final musicPlayCalls = backend.playedMusic.length;
+        final musicStopCalls = backend.stopMusicCalls;
+        final musicPauseCalls = backend.pauseMusicCalls;
+        final musicResumeCalls = backend.resumeMusicCalls;
+
+        expect(
+          await controller.playDiceRoll(
+            actionKey: 'room:${entry.key}-roll',
+            elapsedMs: 0,
+            rollDurationMs: 800,
+          ),
+          isTrue,
+        );
+        backend.advanceMusic(const Duration(seconds: 1));
+
+        expect(backend.playedMusic.length, musicPlayCalls);
+        expect(backend.stopMusicCalls, musicStopCalls);
+        expect(backend.pauseMusicCalls, musicPauseCalls);
+        expect(backend.resumeMusicCalls, musicResumeCalls);
+        expect(backend.musicPosition, const Duration(seconds: 4));
+      },
+    );
+  }
+
   test(
     'volume zero mutes locally and persists without stopping music',
     () async {
@@ -92,6 +129,87 @@ void main() {
     expect(backend.playedSfx, [AudioCatalog.diceSfxAsset]);
     expect(backend.sfxPositions, [const Duration(milliseconds: 180)]);
   });
+
+  test('several turns layer SFX over one uninterrupted music play', () async {
+    await controller.initialize(initialContext: MusicContext.classic);
+
+    for (var turn = 1; turn <= 4; turn++) {
+      backend.advanceMusic(const Duration(milliseconds: 800));
+      expect(
+        await controller.playDiceRoll(
+          actionKey: 'room:turn-$turn',
+          elapsedMs: 0,
+          rollDurationMs: 800,
+        ),
+        isTrue,
+      );
+    }
+
+    expect(backend.playedMusic, [AudioCatalog.classicMusicAsset]);
+    expect(backend.playedSfx.length, 4);
+    expect(backend.stopMusicCalls, 0);
+    expect(backend.pauseMusicCalls, 0);
+    expect(backend.musicPosition, const Duration(milliseconds: 3200));
+  });
+
+  test('music mute does not prevent dice SFX', () async {
+    await controller.initialize();
+    await controller.setMusicVolume(0);
+
+    expect(
+      await controller.playDiceRoll(
+        actionKey: 'room:music-muted',
+        elapsedMs: 0,
+        rollDurationMs: 800,
+      ),
+      isTrue,
+    );
+    expect(backend.playedSfx, [AudioCatalog.diceSfxAsset]);
+    expect(backend.stopMusicCalls, 0);
+  });
+
+  test('SFX mute leaves music playing and advancing', () async {
+    await controller.initialize();
+    await controller.setSfxVolume(0);
+    backend.advanceMusic(const Duration(seconds: 2));
+
+    expect(
+      await controller.playDiceRoll(
+        actionKey: 'room:sfx-muted',
+        elapsedMs: 0,
+        rollDurationMs: 800,
+      ),
+      isFalse,
+    );
+    backend.advanceMusic(const Duration(seconds: 1));
+
+    expect(backend.playedSfx, isEmpty);
+    expect(backend.musicPosition, const Duration(seconds: 3));
+    expect(backend.stopMusicCalls, 0);
+  });
+
+  test(
+    'AI and remote dice actions share presentation-only SFX mixing',
+    () async {
+      await controller.initialize(initialContext: MusicContext.auroraCircuit);
+
+      for (final actionKey in ['room:ai-roll', 'room:remote-roll']) {
+        expect(
+          await controller.playDiceRoll(
+            actionKey: actionKey,
+            elapsedMs: 120,
+            rollDurationMs: 800,
+          ),
+          isTrue,
+        );
+      }
+
+      expect(backend.playedSfx.length, 2);
+      expect(backend.playedMusic, [AudioCatalog.auroraMusicAsset]);
+      expect(backend.stopMusicCalls, 0);
+      expect(backend.pauseMusicCalls, 0);
+    },
+  );
 
   test('dice action observed before initialization can be retried', () async {
     expect(
@@ -164,16 +282,25 @@ void main() {
 
   test('lifecycle pause and resume preserve the same music track', () async {
     await controller.initialize(initialContext: MusicContext.solarisTemple);
+    await controller.playDiceRoll(
+      actionKey: 'room:before-background',
+      elapsedMs: 0,
+      rollDurationMs: 800,
+    );
+    backend.advanceMusic(const Duration(seconds: 2));
 
     controller.didChangeAppLifecycleState(AppLifecycleState.paused);
     await Future<void>.delayed(Duration.zero);
+    backend.advanceMusic(const Duration(seconds: 5));
     controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
     await Future<void>.delayed(Duration.zero);
+    backend.advanceMusic(const Duration(seconds: 1));
 
     expect(backend.pauseMusicCalls, 1);
     expect(backend.resumeMusicCalls, 1);
     expect(backend.playedMusic, [AudioCatalog.solarisMusicAsset]);
     expect(backend.stopSfxCalls, 1);
+    expect(backend.musicPosition, const Duration(seconds: 3));
   });
 }
 
@@ -208,11 +335,19 @@ class _FakeAudioBackend implements AudioPlaybackBackend {
   int resumeMusicCalls = 0;
   int stopMusicCalls = 0;
   int stopSfxCalls = 0;
+  Duration musicPosition = Duration.zero;
+  bool musicPlaying = false;
+
+  void advanceMusic(Duration duration) {
+    if (musicPlaying) musicPosition += duration;
+  }
 
   @override
   Future<void> playMusic(String assetPath, {required double volume}) async {
     playedMusic.add(assetPath);
     musicVolumes.add(volume);
+    musicPosition = Duration.zero;
+    musicPlaying = true;
   }
 
   @override
@@ -223,16 +358,19 @@ class _FakeAudioBackend implements AudioPlaybackBackend {
   @override
   Future<void> pauseMusic() async {
     pauseMusicCalls++;
+    musicPlaying = false;
   }
 
   @override
   Future<void> resumeMusic() async {
     resumeMusicCalls++;
+    musicPlaying = true;
   }
 
   @override
   Future<void> stopMusic() async {
     stopMusicCalls++;
+    musicPlaying = false;
   }
 
   @override
