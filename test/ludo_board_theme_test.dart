@@ -15,7 +15,7 @@ import 'package:ludo_game/models/ludo_models.dart';
 
 void main() {
   group('board theme resolution', () {
-    test('resolves stable Classic and Aurora Circuit IDs', () {
+    test('resolves all stable board theme IDs', () {
       expect(
         LudoBoardThemeResolver.resolve('classic'),
         same(LudoBoardThemeResolver.classic),
@@ -28,9 +28,18 @@ void main() {
         LudoBoardThemeResolver.resolve(' AURORACIRCUIT '),
         same(LudoBoardThemeResolver.auroraCircuit),
       );
+      expect(
+        LudoBoardThemeResolver.resolve('solarisTemple'),
+        same(LudoBoardThemeResolver.solarisTemple),
+      );
+      expect(
+        LudoBoardThemeResolver.resolve(' SOLARISTEMPLE '),
+        same(LudoBoardThemeResolver.solarisTemple),
+      );
       expect(LudoBoardThemeResolver.selectionLabels, {
         'classic': 'Classic',
         'auroraCircuit': 'Aurora Circuit',
+        'solarisTemple': 'Solaris Temple',
       });
     });
 
@@ -40,6 +49,7 @@ void main() {
         '',
         'legacy',
         'aurora-circuit',
+        'solaris-temple',
         'unknown',
       ]) {
         expect(

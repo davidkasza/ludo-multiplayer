@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../config/progression_config.dart';
+import '../../game/dice_skin.dart';
 import '../../game/ludo_board_theme.dart';
 import '../../game/ludo_palette.dart';
 import '../../game/ludo_rules.dart';
@@ -24,6 +25,8 @@ mixin LudoRoomMixin on ChangeNotifier {
 
   String get statusMessage;
   set statusMessage(String value);
+
+  String get preferredDiceSkinId;
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   get gameSubscription;
@@ -402,7 +405,11 @@ mixin LudoRoomMixin on ChangeNotifier {
               !LudoRules.needsLegacyActionRecovery(latest)) {
             return;
           }
-          final seconds = latest.hasRolled ? 30 : 10;
+          final seconds = LudoGame.decisionDurationForPhase(
+            latest.hasRolled
+                ? LudoGame.waitingForMove
+                : LudoGame.waitingForRoll,
+          );
           transaction.update(reference, {
             'activeMove': null,
             'activeDiceRoll': null,
@@ -440,7 +447,9 @@ mixin LudoRoomMixin on ChangeNotifier {
         }
 
         final waitingForMove = latest.hasRolled;
-        final seconds = waitingForMove ? 30 : 10;
+        final seconds = LudoGame.decisionDurationForPhase(
+          waitingForMove ? LudoGame.waitingForMove : LudoGame.waitingForRoll,
+        );
         transaction.update(reference, {
           'turnPhase': waitingForMove
               ? LudoGame.waitingForMove
@@ -494,6 +503,7 @@ mixin LudoRoomMixin on ChangeNotifier {
     final players = <String>[];
     final playerNames = <String, String>{};
     final preferredColors = <String, String>{};
+    final playerDiceSkins = <String, String>{};
     final playerSeats = <String, int>{};
     final pieces = <String, dynamic>{};
 
@@ -506,6 +516,9 @@ mixin LudoRoomMixin on ChangeNotifier {
         players.add(playerId);
         playerNames[playerId] = playerName.trim();
         preferredColors[playerId] = LudoPalette.defaultForSeat(physicalSeat);
+        playerDiceSkins[playerId] = DiceSkinResolver.normalizeId(
+          preferredDiceSkinId,
+        );
         playerSeats[playerId] = physicalSeat;
         pieces[playerId] = createDefaultPieces(initialPos);
         continue;
@@ -516,6 +529,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         players.add(botId);
         playerNames[botId] = 'Computer ${slotIndex + 1}';
         preferredColors[botId] = LudoPalette.defaultForSeat(physicalSeat);
+        playerDiceSkins[botId] = DiceSkinResolver.classicId;
         playerSeats[botId] = physicalSeat;
         pieces[botId] = createDefaultPieces(initialPos);
       }
@@ -537,6 +551,7 @@ mixin LudoRoomMixin on ChangeNotifier {
       'players': players,
       'playerNames': playerNames,
       'preferredColors': preferredColors,
+      'playerDiceSkins': playerDiceSkins,
       'playerSeats': playerSeats,
       'seatTypes': _seatTypesToFirestore(normalizedSeatTypes),
       'hostUid': user!.uid,
@@ -773,16 +788,22 @@ mixin LudoRoomMixin on ChangeNotifier {
       preferredColors[currentUser.uid] = LudoPalette.defaultForSeat(
         availableSeat,
       );
+      final updatedPlayers = _sortPlayersBySeat(
+        playerIds: [...players, currentUser.uid],
+        playerSeats: {...playerSeats, currentUser.uid: availableSeat},
+        maxPlayers: maxPlayers,
+      );
+      final playerDiceSkins = DiceSkinResolver.withPlayer(
+        data['playerDiceSkins'],
+        playerIds: updatedPlayers,
+        playerId: currentUser.uid,
+        skinId: preferredDiceSkinId,
+      );
       playerSeats[currentUser.uid] = availableSeat;
 
       final pieces = _dynamicMap(data['pieces']);
       pieces[currentUser.uid] = createDefaultPieces(initialPos);
 
-      final updatedPlayers = _sortPlayersBySeat(
-        playerIds: [...players, currentUser.uid],
-        playerSeats: playerSeats,
-        maxPlayers: maxPlayers,
-      );
       final openSeats = maxPlayers - updatedPlayers.length;
       final openHumanSeats = _countOpenHumanSeats(
         maxPlayers: maxPlayers,
@@ -800,6 +821,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         'players': updatedPlayers,
         'playerNames': playerNames,
         'preferredColors': preferredColors,
+        'playerDiceSkins': playerDiceSkins,
         'playerSeats': playerSeats,
         'seatTypes': _seatTypesToFirestore(seatTypes),
         'hostUid': hostUid,
@@ -1001,6 +1023,16 @@ mixin LudoRoomMixin on ChangeNotifier {
           ..removeWhere((key, _) => _isBotId(key));
         final preferredColors = _dynamicMap(data['preferredColors'])
           ..removeWhere((key, _) => _isBotId(key));
+        final rawPlayerDiceSkins = _dynamicMap(data['playerDiceSkins']);
+        final playerDiceSkins = DiceSkinResolver.normalizePlayerMap(
+          rawPlayerDiceSkins,
+          humanPlayers,
+        );
+        if (!rawPlayerDiceSkins.containsKey(hostUid)) {
+          playerDiceSkins[hostUid] = DiceSkinResolver.normalizeId(
+            preferredDiceSkinId,
+          );
+        }
 
         final updatedPlayerSeats = <String, int>{};
         final updatedPieces = <String, dynamic>{};
@@ -1027,6 +1059,7 @@ mixin LudoRoomMixin on ChangeNotifier {
             occupiedPlayers.add(botId);
             playerNames[botId] = 'Computer ${slotIndex + 1}';
             preferredColors[botId] = LudoPalette.defaultForSeat(physicalSeat);
+            playerDiceSkins[botId] = DiceSkinResolver.classicId;
             updatedPlayerSeats[botId] = physicalSeat;
             updatedPieces[botId] = createDefaultPieces(initialPos);
           }
@@ -1053,6 +1086,7 @@ mixin LudoRoomMixin on ChangeNotifier {
           'players': updatedPlayers,
           'playerNames': playerNames,
           'preferredColors': preferredColors,
+          'playerDiceSkins': playerDiceSkins,
           'playerSeats': updatedPlayerSeats,
           'seatTypes': _seatTypesToFirestore(normalizedSeatTypes),
           'pieces': updatedPieces,
@@ -1166,9 +1200,11 @@ mixin LudoRoomMixin on ChangeNotifier {
           'activeDiceRoll': null,
           'turnPhase': LudoGame.waitingForRoll,
           'turnStartedAt': FieldValue.serverTimestamp(),
-          'turnDurationSeconds': 10,
+          'turnDurationSeconds': LudoGame.rollDecisionSeconds,
           'turnDeadlineAt': Timestamp.fromDate(
-            estimatedServerNow.toUtc().add(const Duration(seconds: 10)),
+            estimatedServerNow.toUtc().add(
+              const Duration(seconds: LudoGame.rollDecisionSeconds),
+            ),
           ),
           'turnVersion': latest.turnVersion + 1,
           'lastActionId': '',
@@ -1236,6 +1272,8 @@ mixin LudoRoomMixin on ChangeNotifier {
             ..remove(currentUser.uid);
           final preferredColors = _dynamicMap(data['preferredColors'])
             ..remove(currentUser.uid);
+          final playerDiceSkins = _dynamicMap(data['playerDiceSkins'])
+            ..remove(currentUser.uid);
           final playerSeats = _dynamicMap(data['playerSeats'])
             ..remove(currentUser.uid);
           final pieces = _dynamicMap(data['pieces'])..remove(currentUser.uid);
@@ -1264,6 +1302,7 @@ mixin LudoRoomMixin on ChangeNotifier {
             'players': players,
             'playerNames': playerNames,
             'preferredColors': preferredColors,
+            'playerDiceSkins': playerDiceSkins,
             'playerSeats': playerSeats,
             'seatTypes': _seatTypesToFirestore(seatTypes),
             'pieces': pieces,

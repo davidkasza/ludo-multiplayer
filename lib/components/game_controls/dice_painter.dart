@@ -2,19 +2,27 @@ import 'package:flutter/material.dart';
 
 class DicePainter extends CustomPainter {
   final int value;
+  final Color pipColor;
+  final Color pipShadowColor;
+  final Color pipHighlightColor;
 
-  const DicePainter(this.value);
+  const DicePainter(
+    this.value, {
+    this.pipColor = const Color(0xff111827),
+    this.pipShadowColor = const Color(0x33000000),
+    this.pipHighlightColor = const Color(0x2effffff),
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final shadowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.20)
+      ..color = pipShadowColor
       ..style = PaintingStyle.fill;
     final pipPaint = Paint()
-      ..color = const Color(0xff111827)
+      ..color = pipColor
       ..style = PaintingStyle.fill;
     final highlightPaint = Paint()
-      ..color = Colors.white.withOpacity(0.18)
+      ..color = pipHighlightColor
       ..style = PaintingStyle.fill;
 
     final r = size.width * 0.095;
@@ -56,6 +64,9 @@ class DicePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant DicePainter oldDelegate) {
-    return oldDelegate.value != value;
+    return oldDelegate.value != value ||
+        oldDelegate.pipColor != pipColor ||
+        oldDelegate.pipShadowColor != pipShadowColor ||
+        oldDelegate.pipHighlightColor != pipHighlightColor;
   }
 }

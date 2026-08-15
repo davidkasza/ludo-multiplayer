@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../game/ludo_animation.dart';
+import '../../game/dice_skin.dart';
 import 'dice_painter.dart';
 
 class RollingDiceUI extends StatefulWidget {
@@ -10,6 +11,7 @@ class RollingDiceUI extends StatefulWidget {
   final double initialProgress;
   final Duration rollDuration;
   final double size;
+  final DiceSkinDefinition skin;
 
   const RollingDiceUI({
     super.key,
@@ -19,6 +21,7 @@ class RollingDiceUI extends StatefulWidget {
     required this.initialProgress,
     required this.rollDuration,
     this.size = 38.0,
+    this.skin = DiceSkinResolver.classic,
   });
 
   @override
@@ -131,14 +134,14 @@ class _RollingDiceUIState extends State<RollingDiceUI>
                       width: widget.size,
                       height: widget.size,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
+                        gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: [Colors.white, Color(0xffe5e7eb)],
+                          colors: [widget.skin.faceStart, widget.skin.faceEnd],
                         ),
                         borderRadius: BorderRadius.circular(widget.size * 0.18),
                         border: Border.all(
-                          color: Colors.white.withOpacity(0.78),
+                          color: widget.skin.border.withOpacity(0.78),
                           width: 1.1,
                         ),
                         boxShadow: [
@@ -149,7 +152,14 @@ class _RollingDiceUIState extends State<RollingDiceUI>
                           ),
                         ],
                       ),
-                      child: CustomPaint(painter: DicePainter(motion.face)),
+                      child: CustomPaint(
+                        painter: DicePainter(
+                          motion.face,
+                          pipColor: widget.skin.pip,
+                          pipShadowColor: widget.skin.pipShadow,
+                          pipHighlightColor: widget.skin.pipHighlight,
+                        ),
+                      ),
                     ),
                   ),
                 ),

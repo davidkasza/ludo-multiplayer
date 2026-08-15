@@ -204,7 +204,7 @@ mixin LudoBotMixin on ChangeNotifier {
       } else {
         aiControlled.remove(playerId);
         pending.remove(playerId);
-        final seconds = latest.turnPhase == LudoGame.waitingForMove ? 30 : 10;
+        final seconds = LudoGame.decisionDurationForPhase(latest.turnPhase);
         transaction.update(reference, {
           'aiControlledPlayers': aiControlled,
           'pendingReconnectPlayers': pending,

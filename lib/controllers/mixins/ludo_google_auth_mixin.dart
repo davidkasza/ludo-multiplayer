@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../models/ludo_models.dart';
+import '../../game/dice_skin.dart';
 
 /// Outcomes intentionally remain UI-agnostic so profile screens can decide
 /// whether to show a snackbar, a confirmation dialog, or nothing at all.
@@ -32,6 +33,9 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
 
   String get profileName;
   set profileName(String value);
+
+  String get preferredDiceSkinId;
+  set preferredDiceSkinId(String value);
 
   bool get profileLoaded;
   set profileLoaded(bool value);
@@ -64,7 +68,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
   bool get isGoogleLinked {
     return user?.providerData.any(
           (provider) => provider.providerId == 'google.com',
-    ) ==
+        ) ==
         true;
   }
 
@@ -126,7 +130,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
             error.code == 'account-exists-with-different-credential') {
           _pendingGoogleCredential = error.credential ?? credential;
           googleAuthMessage =
-          'This Google account already has Ludora progress.';
+              'This Google account already has Ludora progress.';
           return GoogleAccountResult.conflict;
         }
         rethrow;
@@ -164,7 +168,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
 
     if (activeGameId.isNotEmpty) {
       googleAuthMessage =
-      'Finish or forfeit the active match before switching accounts.';
+          'Finish or forfeit the active match before switching accounts.';
       return GoogleAccountResult.activeGameBlocked;
     }
 
@@ -176,8 +180,10 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
 
     try {
       final sourceUid = sourceUser.uid;
-      final sourceProfileSnapshot =
-      await db.collection('users').doc(sourceUid).get();
+      final sourceProfileSnapshot = await db
+          .collection('users')
+          .doc(sourceUid)
+          .get();
       final sourceProfile = sourceProfileSnapshot.data() ?? <String, dynamic>{};
 
       final sourceHistorySnapshot = await db
@@ -188,10 +194,10 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
       final historyCopies = sourceHistorySnapshot.docs
           .map(
             (document) => _StoredMatchResult(
-          id: document.id,
-          data: Map<String, dynamic>.from(document.data()),
-        ),
-      )
+              id: document.id,
+              data: Map<String, dynamic>.from(document.data()),
+            ),
+          )
           .toList();
 
       final sourceRewardClaimsSnapshot = await db
@@ -202,10 +208,10 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
       final rewardClaimCopies = sourceRewardClaimsSnapshot.docs
           .map(
             (document) => _StoredRewardClaim(
-          id: document.id,
-          data: Map<String, dynamic>.from(document.data()),
-        ),
-      )
+              id: document.id,
+              data: Map<String, dynamic>.from(document.data()),
+            ),
+          )
           .toList();
 
       final signInResult = await auth.signInWithCredential(credential);
@@ -245,7 +251,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
       if (accountSwitched) {
         await _reloadProfileAfterAuthChange();
         googleAuthMessage =
-        'Signed in with Google, but the guest merge was incomplete.';
+            'Signed in with Google, but the guest merge was incomplete.';
       } else {
         googleAuthMessage = _friendlyFirebaseAuthError(error);
       }
@@ -255,7 +261,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
       if (accountSwitched) {
         await _reloadProfileAfterAuthChange();
         googleAuthMessage =
-        'Signed in with Google, but the guest merge was incomplete.';
+            'Signed in with Google, but the guest merge was incomplete.';
       } else {
         googleAuthMessage = 'Could not merge the guest profile.';
       }
@@ -271,7 +277,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
     if (googleAuthBusy) return GoogleAccountResult.error;
     if (activeGameId.isNotEmpty) {
       googleAuthMessage =
-      'Finish or forfeit the active match before signing out.';
+          'Finish or forfeit the active match before signing out.';
       return GoogleAccountResult.activeGameBlocked;
     }
 
@@ -363,9 +369,9 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
     if (kDebugMode) {
       print(
         'Google account linked: '
-            'uid=${refreshedUser.uid}, '
-            'anonymous=${refreshedUser.isAnonymous}, '
-            'providers=${refreshedUser.providerData.map((p) => p.providerId).toList()}',
+        'uid=${refreshedUser.uid}, '
+        'anonymous=${refreshedUser.isAnonymous}, '
+        'providers=${refreshedUser.providerData.map((p) => p.providerId).toList()}',
       );
     }
   }
@@ -389,49 +395,57 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
 
       final targetName = (targetData['displayName'] as String? ?? '').trim();
       final sourceName = (sourceProfile['displayName'] as String? ?? '').trim();
-
-      transaction.set(
-        targetReference,
-        {
-          if (!targetSnapshot.exists)
-            'createdAt': FieldValue.serverTimestamp(),
-          'displayName': targetName.isNotEmpty
-              ? targetName
-              : sourceName.isNotEmpty
-              ? sourceName
-              : targetUser.displayName ?? '',
-          'activeGameId': targetData['activeGameId'] as String? ?? '',
-          'isAnonymous': false,
-          'googleEmail': targetUser.email ?? '',
-          'googleDisplayName': targetUser.displayName ?? '',
-          'photoUrl': targetUser.photoURL ?? '',
-          'authProviders': targetUser.providerData
-              .map((provider) => provider.providerId)
-              .toSet()
-              .toList(),
-          'mergedSourceUids': mergedSourceUids,
-          if (!alreadyMerged) ...{
-            'xp': FieldValue.increment(
-              (sourceProfile['xp'] as num?)?.toInt() ?? 0,
-            ),
-            'coins': FieldValue.increment(
-              (sourceProfile['coins'] as num?)?.toInt() ?? 0,
-            ),
-            'rewardedMatches': FieldValue.increment(
-              (sourceProfile['rewardedMatches'] as num?)?.toInt() ?? 0,
-            ),
-            'rewardedWins': FieldValue.increment(
-              (sourceProfile['rewardedWins'] as num?)?.toInt() ?? 0,
-            ),
-            'rewardedPodiums': FieldValue.increment(
-              (sourceProfile['rewardedPodiums'] as num?)?.toInt() ?? 0,
-            ),
-          },
-          'updatedAt': FieldValue.serverTimestamp(),
-          'lastSeenAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+      final targetDiceSkin = DiceSkinResolver.normalizeId(
+        targetData['diceSkinId'] is String
+            ? targetData['diceSkinId'] as String
+            : null,
       );
+      final sourceDiceSkin = DiceSkinResolver.normalizeId(
+        sourceProfile['diceSkinId'] is String
+            ? sourceProfile['diceSkinId'] as String
+            : null,
+      );
+
+      transaction.set(targetReference, {
+        if (!targetSnapshot.exists) 'createdAt': FieldValue.serverTimestamp(),
+        'displayName': targetName.isNotEmpty
+            ? targetName
+            : sourceName.isNotEmpty
+            ? sourceName
+            : targetUser.displayName ?? '',
+        'diceSkinId': targetData.containsKey('diceSkinId')
+            ? targetDiceSkin
+            : sourceDiceSkin,
+        'activeGameId': targetData['activeGameId'] as String? ?? '',
+        'isAnonymous': false,
+        'googleEmail': targetUser.email ?? '',
+        'googleDisplayName': targetUser.displayName ?? '',
+        'photoUrl': targetUser.photoURL ?? '',
+        'authProviders': targetUser.providerData
+            .map((provider) => provider.providerId)
+            .toSet()
+            .toList(),
+        'mergedSourceUids': mergedSourceUids,
+        if (!alreadyMerged) ...{
+          'xp': FieldValue.increment(
+            (sourceProfile['xp'] as num?)?.toInt() ?? 0,
+          ),
+          'coins': FieldValue.increment(
+            (sourceProfile['coins'] as num?)?.toInt() ?? 0,
+          ),
+          'rewardedMatches': FieldValue.increment(
+            (sourceProfile['rewardedMatches'] as num?)?.toInt() ?? 0,
+          ),
+          'rewardedWins': FieldValue.increment(
+            (sourceProfile['rewardedWins'] as num?)?.toInt() ?? 0,
+          ),
+          'rewardedPodiums': FieldValue.increment(
+            (sourceProfile['rewardedPodiums'] as num?)?.toInt() ?? 0,
+          ),
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     });
   }
 
@@ -466,7 +480,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
           targetUid,
         );
         playerNames[targetUid] =
-        playerNames[targetUid]?.toString().trim().isNotEmpty == true
+            playerNames[targetUid]?.toString().trim().isNotEmpty == true
             ? playerNames[targetUid]
             : targetDisplayName.isNotEmpty
             ? targetDisplayName
@@ -511,8 +525,10 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
   }) async {
     if (claims.isEmpty || sourceUid == targetUid) return;
 
-    final targetCollection =
-    db.collection('users').doc(targetUid).collection('rewardClaims');
+    final targetCollection = db
+        .collection('users')
+        .doc(targetUid)
+        .collection('rewardClaims');
     final existingSnapshot = await targetCollection.get();
     final existingIds = existingSnapshot.docs.map((doc) => doc.id).toSet();
 
@@ -548,10 +564,10 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
   }
 
   List<String> _replaceUidInList(
-      List<String> source,
-      String oldUid,
-      String newUid,
-      ) {
+    List<String> source,
+    String oldUid,
+    String newUid,
+  ) {
     final result = <String>[];
     for (final value in source) {
       final replaced = value == oldUid ? newUid : value;
@@ -561,10 +577,10 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
   }
 
   Map<String, dynamic> _replaceUidInMap(
-      Object? raw,
-      String oldUid,
-      String newUid,
-      ) {
+    Object? raw,
+    String oldUid,
+    String newUid,
+  ) {
     final result = raw is Map
         ? Map<String, dynamic>.from(raw)
         : <String, dynamic>{};
@@ -579,6 +595,7 @@ mixin LudoGoogleAuthMixin on ChangeNotifier {
 
   Future<void> _reloadProfileAfterAuthChange() async {
     profileName = '';
+    preferredDiceSkinId = DiceSkinResolver.classicId;
     activeGameId = '';
     resumableGame = null;
     profileXp = 0;
@@ -614,28 +631,19 @@ class _StoredMatchResult {
   final String id;
   final Map<String, dynamic> data;
 
-  const _StoredMatchResult({
-    required this.id,
-    required this.data,
-  });
+  const _StoredMatchResult({required this.id, required this.data});
 }
 
 class _StoredRewardClaim {
   final String id;
   final Map<String, dynamic> data;
 
-  const _StoredRewardClaim({
-    required this.id,
-    required this.data,
-  });
+  const _StoredRewardClaim({required this.id, required this.data});
 }
 
 class _PendingClaimWrite {
   final String id;
   final Map<String, dynamic> data;
 
-  const _PendingClaimWrite({
-    required this.id,
-    required this.data,
-  });
+  const _PendingClaimWrite({required this.id, required this.data});
 }

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../models/ludo_models.dart';
 import '../../models/profile_models.dart';
 import '../../config/progression_config.dart';
+import '../../game/dice_skin.dart';
 
 mixin LudoProfileMixin on ChangeNotifier {
   FirebaseFirestore get db;
@@ -12,6 +13,9 @@ mixin LudoProfileMixin on ChangeNotifier {
 
   String get profileName;
   set profileName(String value);
+
+  String get preferredDiceSkinId;
+  set preferredDiceSkinId(String value);
 
   bool get profileLoaded;
   set profileLoaded(bool value);
@@ -53,6 +57,7 @@ mixin LudoProfileMixin on ChangeNotifier {
       if (snapshot.exists && snapshot.data() != null) {
         final profile = PlayerProfile.fromMap(snapshot.id, snapshot.data()!);
         profileName = profile.displayName;
+        preferredDiceSkinId = profile.preferredDiceSkinId;
         activeGameId = profile.activeGameId;
         profileXp = profile.xp;
         profileCoins = profile.coins;
@@ -62,11 +67,13 @@ mixin LudoProfileMixin on ChangeNotifier {
 
         await reference.set({
           'isAnonymous': currentUser.isAnonymous,
+          'diceSkinId': profile.preferredDiceSkinId,
           'lastSeenAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       } else {
         await reference.set({
           'displayName': '',
+          'diceSkinId': DiceSkinResolver.classicId,
           'activeGameId': '',
           'xp': 0,
           'coins': 0,
@@ -113,6 +120,35 @@ mixin LudoProfileMixin on ChangeNotifier {
       if (kDebugMode) {
         print('Profile name update error: $error');
       }
+    }
+  }
+
+  Future<bool> updatePreferredDiceSkin(String skinId) async {
+    final currentUser = user;
+    if (currentUser == null) return false;
+
+    final normalized = DiceSkinResolver.normalizeId(skinId);
+    final previous = preferredDiceSkinId;
+    if (normalized == previous) return true;
+
+    preferredDiceSkinId = normalized;
+    notifyListeners();
+
+    try {
+      await db.collection('users').doc(currentUser.uid).set({
+        'diceSkinId': normalized,
+        'isAnonymous': currentUser.isAnonymous,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      return true;
+    } catch (error) {
+      preferredDiceSkinId = previous;
+      notifyListeners();
+      if (kDebugMode) {
+        print('Dice skin update error: $error');
+      }
+      return false;
     }
   }
 
@@ -192,7 +228,8 @@ mixin LudoProfileMixin on ChangeNotifier {
         return;
       }
 
-      final isValid = candidate.players.contains(currentUser.uid) &&
+      final isValid =
+          candidate.players.contains(currentUser.uid) &&
           (candidate.status == 'waiting' || candidate.status == 'playing');
 
       if (!isValid) {
@@ -209,9 +246,7 @@ mixin LudoProfileMixin on ChangeNotifier {
     }
   }
 
-  Future<List<MatchHistoryEntry>> loadMyMatchHistory({
-    int limit = 30,
-  }) async {
+  Future<List<MatchHistoryEntry>> loadMyMatchHistory({int limit = 30}) async {
     final currentUser = user;
     if (currentUser == null) return const [];
 

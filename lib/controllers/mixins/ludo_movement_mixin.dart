@@ -188,11 +188,15 @@ mixin LudoMovementMixin on ChangeNotifier {
           'pendingReconnectPlayers': pending.toSet().toList(),
           'turnPhase': LudoGame.waitingForRoll,
           'turnStartedAt': matchFinished ? null : FieldValue.serverTimestamp(),
-          'turnDurationSeconds': matchFinished ? 0 : 10,
+          'turnDurationSeconds': matchFinished
+              ? 0
+              : LudoGame.rollDecisionSeconds,
           'turnDeadlineAt': matchFinished
               ? null
               : Timestamp.fromDate(
-                  estimatedServerNow.toUtc().add(const Duration(seconds: 10)),
+                  estimatedServerNow.toUtc().add(
+                    const Duration(seconds: LudoGame.rollDecisionSeconds),
+                  ),
                 ),
           'turnVersion': nextVersion,
           'lastActionId': actionId,

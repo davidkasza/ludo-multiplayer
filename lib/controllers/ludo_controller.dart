@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../config/progression_config.dart';
 import '../game/classic_board.dart';
+import '../game/dice_skin.dart';
 import '../game/ludo_palette.dart';
 import '../game/ludo_presentation.dart';
 import '../models/ludo_models.dart';
@@ -53,6 +54,7 @@ class LudoController extends ChangeNotifier
   String statusMessage = '';
 
   String profileName = '';
+  String preferredDiceSkinId = DiceSkinResolver.classicId;
   bool profileLoaded = false;
   String activeGameId = '';
   LudoGame? resumableGame;

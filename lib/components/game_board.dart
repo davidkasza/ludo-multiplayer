@@ -120,6 +120,12 @@ class GameBoard extends StatelessWidget {
           geometry: boardTheme.geometry,
           activeSeats: activeSeats,
         );
+      case LudoBoardSkin.solarisTemple:
+        return SolarisTempleBoardPainter(
+          seatColorIds: controller.seatColorIds,
+          geometry: boardTheme.geometry,
+          activeSeats: activeSeats,
+        );
     }
   }
 

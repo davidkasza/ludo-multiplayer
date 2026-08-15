@@ -21,7 +21,7 @@ service cloud.firestore {
         && request.resource.data.players.size() <= resource.data.maxPlayers
         && request.resource.data.players.hasAll(resource.data.players)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'players', 'playerNames', 'preferredColors', 'playerSeats',
+          'players', 'playerNames', 'preferredColors', 'playerDiceSkins', 'playerSeats',
           'seatTypes', 'pieces', 'maxPlayers', 'opponentType', 'isPublic',
           'openSeats', 'matchmakingOpen', 'status', 'activeMove',
           'activeDiceRoll', 'lastActivityAt', 'expiresAt'

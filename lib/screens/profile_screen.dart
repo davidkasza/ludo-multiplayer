@@ -3,9 +3,11 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../components/cyber_background.dart';
+import '../components/game_controls/rolling_dice_ui.dart';
 import '../controllers/ludo_controller.dart';
 import '../controllers/mixins/ludo_google_auth_mixin.dart';
 import '../game/ludo_board_theme.dart';
+import '../game/dice_skin.dart';
 import '../models/profile_models.dart';
 import '../theme/app_colors.dart';
 
@@ -31,6 +33,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final TextEditingController _nameController;
   late Future<List<MatchHistoryEntry>> _historyFuture;
   bool _savingName = false;
+  bool _savingDiceSkin = false;
   bool _authActionRunning = false;
 
   @override
@@ -73,6 +76,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _selectDiceSkin(String skinId) async {
+    if (_savingDiceSkin || skinId == widget.controller.preferredDiceSkinId) {
+      return;
+    }
+
+    setState(() => _savingDiceSkin = true);
+    final saved = await widget.controller.updatePreferredDiceSkin(skinId);
+    if (!mounted) return;
+    setState(() => _savingDiceSkin = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          saved ? 'Dice skin saved.' : 'Could not save the dice skin.',
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Future<void> _connectGoogle() async {
     if (_authActionRunning) return;
     setState(() => _authActionRunning = true);
@@ -97,10 +120,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           backgroundColor: AppColors.panelBackground,
           title: const Text(
             'Existing Ludora account',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
           ),
           content: Text(
             "This Google account already has Ludora progress. Sign in to it and merge this guest profile's stored match history, XP and coins. The merge is recorded so it cannot be awarded twice.",
@@ -130,8 +150,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (merge != true || !mounted) return;
 
     setState(() => _authActionRunning = true);
-    final result =
-    await widget.controller.mergeAndSignInWithExistingGoogle();
+    final result = await widget.controller.mergeAndSignInWithExistingGoogle();
     if (!mounted) return;
     await _finishAuthAction(result);
   }
@@ -146,10 +165,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           backgroundColor: AppColors.panelBackground,
           title: const Text(
             'Sign out?',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
           ),
           content: Text(
             'Your Google profile stays safe. This installation will start a new guest profile until you sign in again.',
@@ -187,7 +203,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _finishAuthAction(GoogleAccountResult result) async {
     if (!mounted) return;
 
-    final successful = result == GoogleAccountResult.linked ||
+    final successful =
+        result == GoogleAccountResult.linked ||
         result == GoogleAccountResult.signedIn ||
         result == GoogleAccountResult.signedOut;
 
@@ -212,10 +229,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         : 'Google account action failed.';
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -256,22 +270,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               _ProfileIdentityCard(
                                 nameController: _nameController,
                                 isAnonymous:
-                                widget.controller.user?.isAnonymous ?? true,
+                                    widget.controller.user?.isAnonymous ?? true,
                                 isSaving: _savingName,
                                 onSave: _saveName,
                               ),
                               const SizedBox(height: 10),
+                              _DiceSkinPanel(
+                                selectedSkinId:
+                                    widget.controller.preferredDiceSkinId,
+                                saving: _savingDiceSkin,
+                                onSelected: _selectDiceSkin,
+                              ),
+                              const SizedBox(height: 10),
                               _AccountPanel(
                                 controller: widget.controller,
-                                busy: _authActionRunning ||
+                                busy:
+                                    _authActionRunning ||
                                     widget.controller.googleAuthBusy,
                                 onConnect: _connectGoogle,
                                 onSignOut: _signOut,
                               ),
                               const SizedBox(height: 10),
-                              _ProgressionPanel(
-                                controller: widget.controller,
-                              ),
+                              _ProgressionPanel(controller: widget.controller),
                               const SizedBox(height: 10),
                               _StatsPanel(stats: stats),
                               const SizedBox(height: 10),
@@ -301,14 +321,160 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
+class _DiceSkinPanel extends StatelessWidget {
+  final String selectedSkinId;
+  final bool saving;
+  final ValueChanged<String> onSelected;
+
+  const _DiceSkinPanel({
+    required this.selectedSkinId,
+    required this.saving,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedSelection = DiceSkinResolver.normalizeId(selectedSkinId);
+
+    return _GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Dice appearance',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (saving)
+                const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Every player sees this material when you roll.',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.45),
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cardWidth = (constraints.maxWidth - 8) / 2;
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final skin in DiceSkinResolver.availableSkins)
+                    _DiceSkinTile(
+                      width: cardWidth,
+                      skin: skin,
+                      selected: skin.id == normalizedSelection,
+                      enabled: !saving,
+                      onTap: () => onSelected(skin.id),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiceSkinTile extends StatelessWidget {
+  final double width;
+  final DiceSkinDefinition skin;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _DiceSkinTile({
+    required this.width,
+    required this.skin,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: selected
+            ? AppColors.blueBase.withOpacity(0.15)
+            : Colors.black.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(11),
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(11),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(
+                color: selected
+                    ? AppColors.blueBright.withOpacity(0.7)
+                    : Colors.white.withOpacity(0.09),
+                width: selected ? 1.5 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                RollingDiceUI(
+                  value: 5,
+                  isRolling: false,
+                  animationKey: null,
+                  initialProgress: 1,
+                  rollDuration: const Duration(milliseconds: 800),
+                  size: 36,
+                  skin: skin,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    skin.displayName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? Colors.white : Colors.white70,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  const Icon(
+                    Icons.check_circle,
+                    color: AppColors.blueBright,
+                    size: 17,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ProfileHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onRefresh;
 
-  const _ProfileHeader({
-    required this.onBack,
-    required this.onRefresh,
-  });
+  const _ProfileHeader({required this.onBack, required this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
@@ -337,10 +503,7 @@ class _ProfileHeader extends StatelessWidget {
                 ),
                 Text(
                   'Stats and match history',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                  ),
+                  style: TextStyle(color: Colors.white54, fontSize: 11),
                 ),
               ],
             ),
@@ -392,11 +555,7 @@ class _ProfileIdentityCard extends StatelessWidget {
                     width: 2,
                   ),
                 ),
-                child: const Icon(
-                  Icons.person,
-                  color: Colors.white,
-                  size: 32,
-                ),
+                child: const Icon(Icons.person, color: Colors.white, size: 32),
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -454,9 +613,7 @@ class _ProfileIdentityCard extends StatelessWidget {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(11),
-                      borderSide: const BorderSide(
-                        color: AppColors.blueBright,
-                      ),
+                      borderSide: const BorderSide(color: AppColors.blueBright),
                     ),
                   ),
                 ),
@@ -475,13 +632,13 @@ class _ProfileIdentityCard extends StatelessWidget {
                   ),
                   child: isSaving
                       ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
                       : const Icon(Icons.save_outlined),
                 ),
               ),
@@ -512,7 +669,6 @@ class _ProfileIdentityCard extends StatelessWidget {
     );
   }
 }
-
 
 class _AccountPanel extends StatelessWidget {
   final LudoController controller;
@@ -583,8 +739,8 @@ class _AccountPanel extends StatelessWidget {
                     Text(
                       linked
                           ? (email.isEmpty
-                          ? 'Progress is available after Google sign-in.'
-                          : email)
+                                ? 'Progress is available after Google sign-in.'
+                                : email)
                           : 'Linking keeps the same Firebase UID, match history and active profile.',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -604,46 +760,46 @@ class _AccountPanel extends StatelessWidget {
             width: double.infinity,
             child: linked
                 ? OutlinedButton.icon(
-              onPressed: busy ? null : onSignOut,
-              icon: busy
-                  ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-                  : const Icon(Icons.logout_rounded),
-              label: const Text('Sign Out'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white70,
-                side: BorderSide(color: Colors.white.withOpacity(0.14)),
-                minimumSize: const Size.fromHeight(46),
-              ),
-            )
+                    onPressed: busy ? null : onSignOut,
+                    icon: busy
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.logout_rounded),
+                    label: const Text('Sign Out'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                      side: BorderSide(color: Colors.white.withOpacity(0.14)),
+                      minimumSize: const Size.fromHeight(46),
+                    ),
+                  )
                 : ElevatedButton.icon(
-              onPressed: busy ? null : onConnect,
-              icon: busy
-                  ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-                  : const Icon(Icons.login_rounded),
-              label: const Text(
-                'Continue with Google',
-                style: TextStyle(fontWeight: FontWeight.w900),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: const Color(0xff1f2937),
-                minimumSize: const Size.fromHeight(46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
-                ),
-              ),
-            ),
+                    onPressed: busy ? null : onConnect,
+                    icon: busy
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.login_rounded),
+                    label: const Text(
+                      'Continue with Google',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xff1f2937),
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                    ),
+                  ),
           ),
         ],
       ),
@@ -678,10 +834,7 @@ class _ProgressionPanel extends StatelessWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppColors.yellowBright.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(999),
@@ -924,10 +1077,7 @@ class _HistoryPanel extends StatelessWidget {
               ),
               Text(
                 '${history.length} stored',
-                style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 10,
-                ),
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
               ),
             ],
           ),
@@ -936,9 +1086,7 @@ class _HistoryPanel extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 28),
               child: Center(
-                child: CircularProgressIndicator(
-                  color: AppColors.blueBright,
-                ),
+                child: CircularProgressIndicator(color: AppColors.blueBright),
               ),
             )
           else if (snapshot.hasError)
@@ -946,25 +1094,21 @@ class _HistoryPanel extends StatelessWidget {
               icon: Icons.cloud_off,
               title: 'Could not load match history',
               subtitle:
-              'Check Firestore rules and the matchResults collection.',
+                  'Check Firestore rules and the matchResults collection.',
               actionLabel: 'Retry',
               onAction: onRetry,
             )
           else if (history.isEmpty)
-              const _HistoryMessage(
-                icon: Icons.history,
-                title: 'No completed matches yet',
-                subtitle: 'Finished games will appear here automatically.',
-              )
-            else
-              for (int index = 0; index < history.length; index++) ...[
-                _HistoryRow(
-                  entry: history[index],
-                  userId: userId,
-                ),
-                if (index != history.length - 1)
-                  const SizedBox(height: 8),
-              ],
+            const _HistoryMessage(
+              icon: Icons.history,
+              title: 'No completed matches yet',
+              subtitle: 'Finished games will appear here automatically.',
+            )
+          else
+            for (int index = 0; index < history.length; index++) ...[
+              _HistoryRow(entry: history[index], userId: userId),
+              if (index != history.length - 1) const SizedBox(height: 8),
+            ],
         ],
       ),
     );
@@ -975,10 +1119,7 @@ class _HistoryRow extends StatelessWidget {
   final MatchHistoryEntry entry;
   final String userId;
 
-  const _HistoryRow({
-    required this.entry,
-    required this.userId,
-  });
+  const _HistoryRow({required this.entry, required this.userId});
 
   @override
   Widget build(BuildContext context) {
@@ -1060,10 +1201,7 @@ class _HistoryRow extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             _formatDate(entry.finishedAt?.toDate()),
-            style: const TextStyle(
-              color: Colors.white38,
-              fontSize: 9,
-            ),
+            style: const TextStyle(color: Colors.white38, fontSize: 9),
           ),
         ],
       ),
@@ -1147,17 +1285,11 @@ class _HistoryMessage extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white38,
-                fontSize: 10,
-              ),
+              style: const TextStyle(color: Colors.white38, fontSize: 10),
             ),
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: 10),
-              TextButton(
-                onPressed: onAction,
-                child: Text(actionLabel!),
-              ),
+              TextButton(onPressed: onAction, child: Text(actionLabel!)),
             ],
           ],
         ),

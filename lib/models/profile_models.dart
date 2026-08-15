@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../game/dice_skin.dart';
+
 String _string(Object? value, [String fallback = '']) =>
     value is String ? value : fallback;
 
@@ -14,6 +16,7 @@ class PlayerProfile {
   final String displayName;
   final bool isAnonymous;
   final String activeGameId;
+  final String preferredDiceSkinId;
   final int xp;
   final int coins;
   final int rewardedMatches;
@@ -27,6 +30,7 @@ class PlayerProfile {
     required this.displayName,
     required this.isAnonymous,
     required this.activeGameId,
+    required this.preferredDiceSkinId,
     required this.xp,
     required this.coins,
     required this.rewardedMatches,
@@ -44,11 +48,18 @@ class PlayerProfile {
           ? map['isAnonymous'] as bool
           : true,
       activeGameId: _string(map['activeGameId']),
+      preferredDiceSkinId: DiceSkinResolver.normalizeId(
+        _string(map['diceSkinId']),
+      ),
       xp: _integer(map['xp']).clamp(0, 1 << 31).toInt(),
       coins: _integer(map['coins']).clamp(0, 1 << 31).toInt(),
-      rewardedMatches: _integer(map['rewardedMatches']).clamp(0, 1 << 31).toInt(),
+      rewardedMatches: _integer(
+        map['rewardedMatches'],
+      ).clamp(0, 1 << 31).toInt(),
       rewardedWins: _integer(map['rewardedWins']).clamp(0, 1 << 31).toInt(),
-      rewardedPodiums: _integer(map['rewardedPodiums']).clamp(0, 1 << 31).toInt(),
+      rewardedPodiums: _integer(
+        map['rewardedPodiums'],
+      ).clamp(0, 1 << 31).toInt(),
       createdAt: map['createdAt'] is Timestamp
           ? map['createdAt'] as Timestamp
           : null,
@@ -85,8 +96,8 @@ class MatchHistoryEntry {
   });
 
   factory MatchHistoryEntry.fromDocument(
-      QueryDocumentSnapshot<Map<String, dynamic>> document,
-      ) {
+    QueryDocumentSnapshot<Map<String, dynamic>> document,
+  ) {
     final map = document.data();
     final names = <String, String>{};
     final rawNames = map['playerNames'];
@@ -145,16 +156,16 @@ class PlayerMatchStats {
   });
 
   factory PlayerMatchStats.fromHistory(
-      String playerId,
-      List<MatchHistoryEntry> history,
-      ) {
-    final games = history.where(
-          (entry) => entry.ranking.contains(playerId),
-    ).toList();
+    String playerId,
+    List<MatchHistoryEntry> history,
+  ) {
+    final games = history
+        .where((entry) => entry.ranking.contains(playerId))
+        .toList();
 
-    final wins = games.where(
-          (entry) => entry.placementFor(playerId) == 1,
-    ).length;
+    final wins = games
+        .where((entry) => entry.placementFor(playerId) == 1)
+        .length;
 
     final podiums = games.where((entry) {
       final placement = entry.placementFor(playerId);

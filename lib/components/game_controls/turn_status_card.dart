@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/ludo_controller.dart';
-import '../../models/ludo_models.dart';
+import '../../game/dice_skin.dart';
 import '../../theme/app_colors.dart';
 import 'rolling_dice_ui.dart';
 
@@ -29,7 +29,10 @@ class TurnStatusCard extends StatelessWidget {
     final myPlacement = game?.placementFor(myId) ?? 0;
     final iAmFinished = c.isPlayerVisuallyFinished(myId);
     final rollingPlayerId = c.diceRollingPlayerId ?? currentTurnId;
-    final rollingPlayerName = c.getPlayerDisplayTitle(rollingPlayerId);
+    final diceSkin = DiceSkinResolver.forPlayer(
+      game?.playerDiceSkins,
+      rollingPlayerId,
+    );
 
     return AnimatedBuilder(
       animation: pulseAnimation,
@@ -81,57 +84,35 @@ class TurnStatusCard extends StatelessWidget {
                 Flexible(
                   child: ValueListenableBuilder<int>(
                     valueListenable: c.turnSecondsNotifier,
-                    builder: (context, seconds, child) => Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    builder: (context, seconds, child) => Row(
                       children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                game?.status == 'waiting'
-                                    ? 'Waiting...'
-                                    : iAmFinished
-                                    ? 'YOU FINISHED #$myPlacement'
-                                    : c.isVisualMyTurn
-                                    ? 'YOUR TURN!'
-                                    : c.getPlayerDisplayTitle(currentTurnId),
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 13,
-                                  color: Colors.white,
-                                ),
-                              ),
+                        Flexible(
+                          child: Text(
+                            game?.status == 'waiting'
+                                ? 'Waiting...'
+                                : iAmFinished
+                                ? 'YOU FINISHED #$myPlacement'
+                                : c.isVisualMyTurn
+                                ? 'YOUR TURN!'
+                                : c.getPlayerDisplayTitle(currentTurnId),
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                              color: Colors.white,
                             ),
-                            if (game?.status == 'playing' &&
-                                !iAmFinished &&
-                                !c.isDicePresentationActive &&
-                                c.visualActiveMove == null) ...[
-                              const SizedBox(width: 7),
-                              _CountdownBadge(
-                                seconds: seconds,
-                                automated: currentIsAutomated,
-                              ),
-                            ],
-                          ],
+                          ),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _subtitle(
-                            controller: c,
-                            game: game,
-                            iAmFinished: iAmFinished,
-                            currentIsAutomated: currentIsAutomated,
-                            rollingPlayerName: rollingPlayerName,
+                        if (game?.status == 'playing' &&
+                            !iAmFinished &&
+                            !c.isDicePresentationActive &&
+                            c.visualActiveMove == null) ...[
+                          const SizedBox(width: 7),
+                          _CountdownBadge(
                             seconds: seconds,
+                            automated: currentIsAutomated,
                           ),
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withOpacity(0.5),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -149,53 +130,12 @@ class TurnStatusCard extends StatelessWidget {
               initialProgress: c.diceRollInitialProgress,
               rollDuration: Duration(milliseconds: c.diceRollDurationMs),
               size: 42,
+              skin: diceSkin,
             ),
           ),
         ],
       ),
     );
-  }
-
-  String _subtitle({
-    required LudoController controller,
-    required LudoGame? game,
-    required bool iAmFinished,
-    required bool currentIsAutomated,
-    required String rollingPlayerName,
-    required int seconds,
-  }) {
-    if (controller.isDiceRolling) {
-      return controller.isVisualMyTurn
-          ? 'Rolling the dice...'
-          : '$rollingPlayerName is rolling...';
-    }
-    if (controller.isShowingDiceResult) {
-      final result = controller.visualDiceValue ?? game?.diceValue ?? 0;
-      return controller.isVisualMyTurn
-          ? 'You rolled $result'
-          : '$rollingPlayerName rolled $result';
-    }
-    if (controller.visualActiveMove != null) {
-      final movingName = controller.getPlayerDisplayTitle(
-        controller.visualActiveMove!.playerId,
-      );
-      return controller.isVisualMyTurn
-          ? 'Moving your piece...'
-          : '$movingName is moving...';
-    }
-    if (iAmFinished) return 'Waiting for the remaining players...';
-    if (currentIsAutomated) {
-      return 'AI is playing for ${controller.getPlayerDisplayTitle(game?.currentTurn ?? '')}';
-    }
-    if (controller.isVisualMyTurn) {
-      return game?.turnPhase == LudoGame.waitingForMove
-          ? 'Select a piece within ${seconds}s'
-          : 'Roll within ${seconds}s';
-    }
-    if (game?.turnPhase == LudoGame.waitingForMove) {
-      return 'Waiting for a piece selection...';
-    }
-    return 'Waiting for the other player to roll...';
   }
 }
 

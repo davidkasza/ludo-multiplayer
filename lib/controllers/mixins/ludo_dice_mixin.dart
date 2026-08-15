@@ -154,7 +154,7 @@ mixin LudoDiceMixin on ChangeNotifier {
           update.addAll({
             'hasRolled': true,
             'turnPhase': LudoGame.waitingForMove,
-            ..._turnTimingFields(30),
+            ..._turnTimingFields(LudoGame.moveDecisionSeconds),
           });
         } else {
           final resolution = LudoRules.resolveNoValidMove(
@@ -167,7 +167,7 @@ mixin LudoDiceMixin on ChangeNotifier {
             'hasRolled': false,
             'currentTurn': resolution.nextPlayerId,
             'turnPhase': LudoGame.waitingForRoll,
-            ..._turnTimingFields(10),
+            ..._turnTimingFields(LudoGame.rollDecisionSeconds),
           });
           message = resolution.keepsTurn
               ? '🎲 ${getPlayerDisplayTitle(playerId)} rolled a 6, but has no valid move. Roll again!'

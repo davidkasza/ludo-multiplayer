@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import '../game/dice_skin.dart';
+
 int _readInt(Object? value, int fallback) =>
     value is num ? value.toInt() : fallback;
 
@@ -414,10 +416,13 @@ class LudoGame {
 
   static const String waitingForRoll = 'waitingForRoll';
   static const String waitingForMove = 'waitingForMove';
+  static const int rollDecisionSeconds = 30;
+  static const int moveDecisionSeconds = 30;
 
   final List<String> players;
   final Map<String, String> playerNames;
   final Map<String, String> preferredColors;
+  final Map<String, String> playerDiceSkins;
   final Map<String, int> playerSeats;
   final Map<int, String> seatTypes;
   final String hostUid;
@@ -457,6 +462,7 @@ class LudoGame {
     required this.players,
     required this.playerNames,
     required this.preferredColors,
+    this.playerDiceSkins = const <String, String>{},
     required this.playerSeats,
     required this.seatTypes,
     required this.hostUid,
@@ -629,6 +635,16 @@ class LudoGame {
     return forfeitedPlayers.contains(playerId);
   }
 
+  String diceSkinIdForPlayer(String playerId) {
+    return DiceSkinResolver.forPlayer(playerDiceSkins, playerId).id;
+  }
+
+  static int decisionDurationForPhase(String turnPhase) {
+    return turnPhase == waitingForMove
+        ? moveDecisionSeconds
+        : rollDecisionSeconds;
+  }
+
   Duration? get matchDuration {
     if (startedAt == null || finishedAt == null) return null;
     final duration = finishedAt!.toDate().difference(startedAt!.toDate());
@@ -682,6 +698,11 @@ class LudoGame {
         preferredColors[key] = value.toString();
       });
     }
+
+    final playerDiceSkins = DiceSkinResolver.normalizePlayerMap(
+      map['playerDiceSkins'],
+      players,
+    );
 
     final maxPlayers = _readInt(map['maxPlayers'], 2).clamp(2, 4).toInt();
     final layout = seatLayoutForMaxPlayers(maxPlayers);
@@ -819,6 +840,7 @@ class LudoGame {
       players: players,
       playerNames: playerNames,
       preferredColors: preferredColors,
+      playerDiceSkins: playerDiceSkins,
       playerSeats: playerSeats,
       seatTypes: seatTypes,
       hostUid: _readString(map['hostUid']).isNotEmpty
@@ -891,6 +913,7 @@ class LudoGame {
       'players': players,
       'playerNames': playerNames,
       'preferredColors': preferredColors,
+      'playerDiceSkins': playerDiceSkins,
       'playerSeats': playerSeats,
       'seatTypes': {
         for (final entry in seatTypes.entries)
