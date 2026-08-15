@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../audio/app_audio_controller.dart';
+import '../components/audio/audio_settings_panel.dart';
 import '../components/cyber_background.dart';
 import '../components/game_controls/rolling_dice_ui.dart';
 import '../controllers/ludo_controller.dart';
@@ -13,6 +15,7 @@ import '../theme/app_colors.dart';
 
 class ProfileScreen extends StatefulWidget {
   final LudoController controller;
+  final AppAudioController audioController;
   final String initialPlayerName;
   final ValueChanged<String> onNameChanged;
   final VoidCallback onBack;
@@ -20,6 +23,7 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.controller,
+    required this.audioController,
     required this.initialPlayerName,
     required this.onNameChanged,
     required this.onBack,
@@ -280,6 +284,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     widget.controller.preferredDiceSkinId,
                                 saving: _savingDiceSkin,
                                 onSelected: _selectDiceSkin,
+                              ),
+                              const SizedBox(height: 10),
+                              AudioSettingsPanel(
+                                controller: widget.audioController,
                               ),
                               const SizedBox(height: 10),
                               _AccountPanel(

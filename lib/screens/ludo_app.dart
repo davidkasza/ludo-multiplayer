@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../audio/app_audio_controller.dart';
+import '../audio/audio_catalog.dart';
 import '../components/end_game.dart';
 import '../components/lobby.dart';
 import '../components/waiting_room.dart';
@@ -19,6 +21,7 @@ class LudoApp extends StatefulWidget {
 
 class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   final LudoController _controller = LudoController();
+  late final AppAudioController _audioController;
 
   String playerName = '';
   String selectedBoard = 'classic';
@@ -34,6 +37,8 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
 
+    _audioController = AppAudioController();
+    unawaited(_initializeAudio());
     WidgetsBinding.instance.addObserver(this);
     _controller.addListener(_gameListener);
 
@@ -42,6 +47,11 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
         _gameListener();
       }
     });
+  }
+
+  Future<void> _initializeAudio() async {
+    await _audioController.initialize();
+    if (mounted) _syncAudioPresentation();
   }
 
   @override
@@ -60,6 +70,8 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   }
 
   void _gameListener() {
+    _syncAudioPresentation();
+
     if (!_profileNameApplied && _controller.profileLoaded) {
       _profileNameApplied = true;
 
@@ -72,6 +84,35 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
 
     _showSystemEventIfNeeded();
     _showChatIfNeeded();
+  }
+
+  void _syncAudioPresentation() {
+    final currentGame = _controller.game;
+    final isShowingMatch =
+        currentGame != null && _controller.shouldShowGameScreen;
+    final musicContext = isShowingMatch
+        ? AudioCatalog.musicContextForBoardId(currentGame.boardId)
+        : MusicContext.menu;
+    unawaited(_audioController.setMusicContext(musicContext));
+
+    final activeRoll = currentGame?.activeDiceRoll;
+    if (!isShowingMatch ||
+        !_controller.isDiceRolling ||
+        activeRoll == null ||
+        _controller.diceAnimationKey != activeRoll.key) {
+      return;
+    }
+
+    final elapsedMs =
+        (_controller.diceRollInitialProgress * _controller.diceRollDurationMs)
+            .round();
+    unawaited(
+      _audioController.playDiceRoll(
+        actionKey: '${_controller.gameId}:${activeRoll.key}',
+        elapsedMs: elapsedMs,
+        rollDurationMs: _controller.diceRollDurationMs,
+      ),
+    );
   }
 
   void _showSystemEventIfNeeded() {
@@ -201,110 +242,119 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_gameListener);
     _controller.dispose();
+    _audioController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final game = _controller.game;
-
-        if (!_controller.profileLoaded || !_controller.activeGameChecked) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (_controller.shouldShowEndGame) {
-          return EndGame(
-            controller: _controller,
-            onQuit: () {
-              showProfile = false;
-              _controller.quitToMenu();
-            },
-          );
-        }
-
-        if (game != null && game.status == 'waiting') {
-          return WaitingRoom(
-            controller: _controller,
-            onQuit: _controller.leaveGame,
-            onStartGame: _controller.startGame,
-          );
-        }
-
-        if (game != null && _controller.shouldShowGameScreen) {
-          return GameScreen(
-            controller: _controller,
-            cheatDiceValue: cheatDiceValue,
-            onCheatDiceChanged: (value) {
-              setState(() => cheatDiceValue = value);
-            },
-          );
-        }
-
-        if (showProfile) {
-          return ProfileScreen(
-            controller: _controller,
-            initialPlayerName: playerName,
-            onNameChanged: (value) {
-              setState(() => playerName = value);
-            },
-            onBack: () {
-              setState(() => showProfile = false);
-            },
-          );
-        }
-
-        final resumableGame = _controller.resumableGame;
-        final currentUserId = _controller.user?.uid ?? '';
-
-        return Lobby(
-          playerName: playerName,
-          onPlayerNameChanged: _handlePlayerNameChanged,
-          onOpenProfile: () {
-            setState(() => showProfile = true);
-          },
-          resumableGame: resumableGame,
-          resumableGameId: _controller.activeGameId,
-          resumableGameAiControlled: resumableGame != null &&
-              resumableGame.aiControlledPlayers.contains(currentUserId),
-          onContinueGame: () {
-            unawaited(_controller.continueActiveGame());
-          },
-          onCreateGame: () async {
-            await _persistPlayerName();
-            await _controller.createGame(
-              playerName,
-              selectedBoard,
-              isTestMode,
-            );
-          },
-          onPlayComputer: () async {
-            await _persistPlayerName();
-            await _controller.createSoloGame(
-              playerName,
-              selectedBoard,
-              isTestMode,
-            );
-          },
-          onQuickMatch: () async {
-            await _persistPlayerName();
-            await _controller.randomJoinGame(
-              playerName,
-              selectedBoard,
-              isTestMode,
-            );
-          },
-          onJoinGame: (code) async {
-            await _persistPlayerName();
-            await _controller.joinGame(playerName, code);
-          },
-          statusMessage: _controller.statusMessage,
-        );
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        unawaited(_audioController.handleUserInteraction());
       },
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          final game = _controller.game;
+
+          if (!_controller.profileLoaded || !_controller.activeGameChecked) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+
+          if (_controller.shouldShowEndGame) {
+            return EndGame(
+              controller: _controller,
+              onQuit: () {
+                showProfile = false;
+                _controller.quitToMenu();
+              },
+            );
+          }
+
+          if (game != null && game.status == 'waiting') {
+            return WaitingRoom(
+              controller: _controller,
+              onQuit: _controller.leaveGame,
+              onStartGame: _controller.startGame,
+            );
+          }
+
+          if (game != null && _controller.shouldShowGameScreen) {
+            return GameScreen(
+              controller: _controller,
+              cheatDiceValue: cheatDiceValue,
+              onCheatDiceChanged: (value) {
+                setState(() => cheatDiceValue = value);
+              },
+            );
+          }
+
+          if (showProfile) {
+            return ProfileScreen(
+              controller: _controller,
+              audioController: _audioController,
+              initialPlayerName: playerName,
+              onNameChanged: (value) {
+                setState(() => playerName = value);
+              },
+              onBack: () {
+                setState(() => showProfile = false);
+              },
+            );
+          }
+
+          final resumableGame = _controller.resumableGame;
+          final currentUserId = _controller.user?.uid ?? '';
+
+          return Lobby(
+            playerName: playerName,
+            onPlayerNameChanged: _handlePlayerNameChanged,
+            onOpenProfile: () {
+              setState(() => showProfile = true);
+            },
+            resumableGame: resumableGame,
+            resumableGameId: _controller.activeGameId,
+            resumableGameAiControlled:
+                resumableGame != null &&
+                resumableGame.aiControlledPlayers.contains(currentUserId),
+            onContinueGame: () {
+              unawaited(_controller.continueActiveGame());
+            },
+            onCreateGame: () async {
+              await _persistPlayerName();
+              await _controller.createGame(
+                playerName,
+                selectedBoard,
+                isTestMode,
+              );
+            },
+            onPlayComputer: () async {
+              await _persistPlayerName();
+              await _controller.createSoloGame(
+                playerName,
+                selectedBoard,
+                isTestMode,
+              );
+            },
+            onQuickMatch: () async {
+              await _persistPlayerName();
+              await _controller.randomJoinGame(
+                playerName,
+                selectedBoard,
+                isTestMode,
+              );
+            },
+            onJoinGame: (code) async {
+              await _persistPlayerName();
+              await _controller.joinGame(playerName, code);
+            },
+            statusMessage: _controller.statusMessage,
+          );
+        },
+      ),
     );
   }
 }
