@@ -163,9 +163,24 @@ void main() {
       );
 
       expect(find.text('Match complete'), findsOneWidget);
-      expect(_customPainterNamed('_VictoryParticlePainter'), findsNothing);
+      expect(_customPainterNamed('_VictoryFireworksPainter'), findsNothing);
     },
   );
+
+  testWidgets('a losing result does not create fireworks', (tester) async {
+    await tester.pumpWidget(
+      _mediaHost(
+        child: const VictoryCelebration(
+          enabled: false,
+          winnerColor: Colors.red,
+          child: Text('Match complete'),
+        ),
+      ),
+    );
+
+    expect(find.text('Match complete'), findsOneWidget);
+    expect(_customPainterNamed('_VictoryFireworksPainter'), findsNothing);
+  });
 
   testWidgets('enabling reduced motion stops an active victory ticker', (
     tester,
@@ -177,12 +192,12 @@ void main() {
     );
     await tester.pumpWidget(_mediaHost(child: celebration));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(_customPainterNamed('_VictoryParticlePainter'), findsOneWidget);
+    expect(_customPainterNamed('_VictoryFireworksPainter'), findsOneWidget);
 
     await tester.pumpWidget(
       _mediaHost(disableAnimations: true, child: celebration),
     );
-    expect(_customPainterNamed('_VictoryParticlePainter'), findsNothing);
+    expect(_customPainterNamed('_VictoryFireworksPainter'), findsNothing);
   });
 }
 

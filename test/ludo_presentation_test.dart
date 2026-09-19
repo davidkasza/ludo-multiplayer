@@ -266,6 +266,60 @@ void main() {
       );
     }
 
+    test('is shown only for an action owned by the local human', () {
+      expect(
+        LudoPresentation.shouldShowLocalExtraTurnFeedback(
+          actionPlayerId: 'local',
+          localPlayerId: 'local',
+          actionPlayerIsAiControlled: false,
+        ),
+        isTrue,
+      );
+      expect(
+        LudoPresentation.shouldShowLocalExtraTurnFeedback(
+          actionPlayerId: 'remote',
+          localPlayerId: 'local',
+          actionPlayerIsAiControlled: false,
+        ),
+        isFalse,
+        reason: 'a remote human extra turn belongs only on their client',
+      );
+      expect(
+        LudoPresentation.shouldShowLocalExtraTurnFeedback(
+          actionPlayerId: 'local',
+          localPlayerId: 'local',
+          actionPlayerIsAiControlled: true,
+        ),
+        isFalse,
+        reason: 'AI takeover actions are not local-human feedback',
+      );
+    });
+
+    test('new dice or movement presentation dismisses the feedback', () {
+      expect(
+        LudoPresentation.shouldDismissExtraTurnFeedback(
+          hasActiveMovePresentation: false,
+          hasActiveDicePresentation: false,
+        ),
+        isFalse,
+      );
+      expect(
+        LudoPresentation.shouldDismissExtraTurnFeedback(
+          hasActiveMovePresentation: true,
+          hasActiveDicePresentation: false,
+        ),
+        isTrue,
+      );
+      expect(
+        LudoPresentation.shouldDismissExtraTurnFeedback(
+          hasActiveMovePresentation: false,
+          hasActiveDicePresentation: true,
+        ),
+        isTrue,
+      );
+      expect(LudoPresentation.extraTurnFeedbackDurationMs, 1500);
+    });
+
     test('uses the most meaningful committed extra-turn reason', () {
       expect(
         LudoPresentation.extraTurnReasonAfterMove(
@@ -512,18 +566,31 @@ void main() {
           matchWasObservedInProgress: true,
           authoritativeMatchFinished: true,
           presentationComplete: true,
+          localPlayerWon: true,
         ),
         isTrue,
+      );
+      expect(
+        LudoPresentation.shouldCelebrateVictory(
+          matchWasObservedInProgress: true,
+          authoritativeMatchFinished: true,
+          presentationComplete: true,
+          localPlayerWon: false,
+        ),
+        isFalse,
+        reason: 'losing clients keep the normal static result screen',
       );
       expect(
         LudoPresentation.shouldCelebrateVictory(
           matchWasObservedInProgress: false,
           authoritativeMatchFinished: true,
           presentationComplete: true,
+          localPlayerWon: true,
         ),
         isFalse,
         reason: 'an already-finished reconnect must not replay celebration',
       );
+      expect(LudoPresentation.victoryFireworksDurationMs, 4000);
     });
 
     test('does not visually finish the moving player early', () {

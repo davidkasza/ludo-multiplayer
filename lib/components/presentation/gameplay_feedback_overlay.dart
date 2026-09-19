@@ -41,7 +41,9 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(
+        milliseconds: LudoPresentation.extraTurnFeedbackDurationMs,
+      ),
     )..addStatusListener(_handleAnimationStatus);
     _captureActivePresentations();
     widget.controller.addListener(_handleControllerChanged);
@@ -121,7 +123,11 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
       _observedRoll = null;
     }
 
-    if ((currentMove != null || currentRoll != null) && _reason != null) {
+    if (LudoPresentation.shouldDismissExtraTurnFeedback(
+          hasActiveMovePresentation: currentMove != null,
+          hasActiveDicePresentation: currentRoll != null,
+        ) &&
+        _reason != null) {
       _dismissFeedback();
     }
     _schedulePendingFeedbackResolution();
@@ -144,12 +150,13 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
         (completedMove.turnVersion == 0 ||
             game.turnVersion >= completedMove.turnVersion)) {
       _pendingCompletedMove = null;
-      if (LudoPresentation.isCurrentActionForFeedback(
-        actionTurnVersion: completedMove.turnVersion,
-        currentTurnVersion: game.turnVersion,
-        lastActionType: game.lastActionType,
-        expectedActionType: 'move',
-      )) {
+      if (_belongsToLocalHuman(game, completedMove.playerId) &&
+          LudoPresentation.isCurrentActionForFeedback(
+            actionTurnVersion: completedMove.turnVersion,
+            currentTurnVersion: game.turnVersion,
+            lastActionType: game.lastActionType,
+            expectedActionType: 'move',
+          )) {
         final reason = LudoPresentation.extraTurnReasonAfterMove(
           move: completedMove,
           authoritativeTurnPlayerId: game.currentTurn,
@@ -167,12 +174,13 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
         (completedRoll.turnVersion == 0 ||
             game.turnVersion >= completedRoll.turnVersion)) {
       _pendingCompletedRoll = null;
-      if (LudoPresentation.isCurrentActionForFeedback(
-        actionTurnVersion: completedRoll.turnVersion,
-        currentTurnVersion: game.turnVersion,
-        lastActionType: game.lastActionType,
-        expectedActionType: 'dice',
-      )) {
+      if (_belongsToLocalHuman(game, completedRoll.playerId) &&
+          LudoPresentation.isCurrentActionForFeedback(
+            actionTurnVersion: completedRoll.turnVersion,
+            currentTurnVersion: game.turnVersion,
+            lastActionType: game.lastActionType,
+            expectedActionType: 'dice',
+          )) {
         final reason = LudoPresentation.extraTurnReasonAfterRoll(
           roll: completedRoll,
           authoritativeTurnPlayerId: game.currentTurn,
@@ -182,6 +190,14 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
         if (reason != null) _showReason(reason);
       }
     }
+  }
+
+  bool _belongsToLocalHuman(LudoGame game, String actionPlayerId) {
+    return LudoPresentation.shouldShowLocalExtraTurnFeedback(
+      actionPlayerId: actionPlayerId,
+      localPlayerId: widget.controller.user?.uid ?? '',
+      actionPlayerIsAiControlled: game.isAiControlled(actionPlayerId),
+    );
   }
 
   void _showReason(ExtraTurnReason reason) {
@@ -200,10 +216,15 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
 
   void _scheduleReducedMotionDismiss() {
     _reducedMotionTimer?.cancel();
-    _reducedMotionTimer = Timer(const Duration(milliseconds: 850), () {
-      _reducedMotionTimer = null;
-      if (mounted) setState(() => _reason = null);
-    });
+    _reducedMotionTimer = Timer(
+      const Duration(
+        milliseconds: LudoPresentation.extraTurnFeedbackDurationMs,
+      ),
+      () {
+        _reducedMotionTimer = null;
+        if (mounted) setState(() => _reason = null);
+      },
+    );
   }
 
   void _dismissFeedback() {
@@ -246,21 +267,26 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
                 builder: (context, child) {
                   if (_reduceMotion) return child!;
                   final progress = _controller.value;
-                  final opacity = progress < 0.18
-                      ? Curves.easeOut.transform(progress / 0.18)
-                      : progress > 0.72
-                      ? 1 - Curves.easeIn.transform((progress - 0.72) / 0.28)
+                  const fadeInEnd =
+                      180 / LudoPresentation.extraTurnFeedbackDurationMs;
+                  const fadeOutStart =
+                      (LudoPresentation.extraTurnFeedbackDurationMs - 220) /
+                      LudoPresentation.extraTurnFeedbackDurationMs;
+                  final opacity = progress < fadeInEnd
+                      ? Curves.easeOut.transform(progress / fadeInEnd)
+                      : progress > fadeOutStart
+                      ? 1 -
+                            Curves.easeIn.transform(
+                              (progress - fadeOutStart) / (1 - fadeOutStart),
+                            )
                       : 1.0;
-                  final slide =
-                      (1 -
-                          Curves.easeOutBack.transform(
-                            (progress / 0.45).clamp(0.0, 1.0),
-                          )) *
-                      14;
+                  final entrance = Curves.easeOutBack.transform(
+                    (progress / fadeInEnd).clamp(0.0, 1.0),
+                  );
                   return Opacity(
                     opacity: opacity.clamp(0.0, 1.0),
-                    child: Transform.translate(
-                      offset: Offset(0, slide),
+                    child: Transform.scale(
+                      scale: 0.94 + entrance * 0.06,
                       child: child,
                     ),
                   );

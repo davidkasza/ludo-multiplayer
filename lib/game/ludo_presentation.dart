@@ -18,6 +18,9 @@ class LudoPresentation {
   /// A short success beat after a piece has visibly reached the final goal.
   static const int finishCelebrationMs = 520;
 
+  static const int extraTurnFeedbackDurationMs = 1500;
+  static const int victoryFireworksDurationMs = 4000;
+
   static DicePresentationFrame diceFrame({
     required int elapsedMs,
     required int rollDurationMs,
@@ -230,6 +233,23 @@ class LudoPresentation {
         lastActionType == expectedActionType;
   }
 
+  static bool shouldShowLocalExtraTurnFeedback({
+    required String actionPlayerId,
+    required String localPlayerId,
+    required bool actionPlayerIsAiControlled,
+  }) {
+    return localPlayerId.isNotEmpty &&
+        actionPlayerId == localPlayerId &&
+        !actionPlayerIsAiControlled;
+  }
+
+  static bool shouldDismissExtraTurnFeedback({
+    required bool hasActiveMovePresentation,
+    required bool hasActiveDicePresentation,
+  }) {
+    return hasActiveMovePresentation || hasActiveDicePresentation;
+  }
+
   static bool shouldPresentQuickChat({
     required LudoChat chat,
     required int nowMs,
@@ -246,10 +266,12 @@ class LudoPresentation {
     required bool matchWasObservedInProgress,
     required bool authoritativeMatchFinished,
     required bool presentationComplete,
+    required bool localPlayerWon,
   }) {
     return matchWasObservedInProgress &&
         authoritativeMatchFinished &&
-        presentationComplete;
+        presentationComplete &&
+        localPlayerWon;
   }
 
   static double _smoothStep(double value) {

@@ -236,6 +236,7 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
               ),
               authoritativeMatchFinished: game?.status == 'finished',
               presentationComplete: true,
+              localPlayerWon: game?.winnerUid == (_controller.user?.uid ?? ''),
             );
             return VictoryCelebration(
               key: ValueKey('victory:${_controller.gameId}'),

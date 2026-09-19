@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../../game/ludo_presentation.dart';
+
 /// A short, presentation-only celebration around an already finished match.
 class VictoryCelebration extends StatefulWidget {
   final bool enabled;
@@ -30,7 +32,9 @@ class _VictoryCelebrationState extends State<VictoryCelebration>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1150),
+      duration: const Duration(
+        milliseconds: LudoPresentation.victoryFireworksDurationMs,
+      ),
     );
   }
 
@@ -90,7 +94,7 @@ class _VictoryCelebrationState extends State<VictoryCelebration>
       child: widget.child,
       builder: (context, child) {
         final entrance = Curves.easeOutCubic.transform(
-          (_controller.value / 0.38).clamp(0.0, 1.0),
+          (_controller.value / 0.11).clamp(0.0, 1.0),
         );
         return Stack(
           fit: StackFit.expand,
@@ -106,7 +110,7 @@ class _VictoryCelebrationState extends State<VictoryCelebration>
               child: IgnorePointer(
                 child: RepaintBoundary(
                   child: CustomPaint(
-                    painter: _VictoryParticlePainter(
+                    painter: _VictoryFireworksPainter(
                       progress: _controller.value,
                       winnerColor: widget.winnerColor,
                     ),
@@ -121,61 +125,111 @@ class _VictoryCelebrationState extends State<VictoryCelebration>
   }
 }
 
-class _VictoryParticlePainter extends CustomPainter {
+class _VictoryFireworksPainter extends CustomPainter {
   final double progress;
   final Color winnerColor;
 
-  const _VictoryParticlePainter({
+  const _VictoryFireworksPainter({
     required this.progress,
     required this.winnerColor,
   });
 
+  static const List<_FireworkBurst> _bursts = [
+    _FireworkBurst(0.20, 0.23, 0.00, 0.22, 0.82, 0, 14),
+    _FireworkBurst(0.78, 0.19, 0.11, 0.22, 1.00, 1, 16),
+    _FireworkBurst(0.49, 0.34, 0.25, 0.20, 0.90, 2, 14),
+    _FireworkBurst(0.16, 0.54, 0.38, 0.22, 0.74, 3, 12),
+    _FireworkBurst(0.83, 0.49, 0.51, 0.22, 0.88, 0, 14),
+    _FireworkBurst(0.36, 0.17, 0.64, 0.21, 0.76, 1, 12),
+    _FireworkBurst(0.67, 0.63, 0.78, 0.22, 0.92, 2, 16),
+  ];
+
   @override
   void paint(Canvas canvas, Size size) {
-    final glowOpacity = (1 - progress).clamp(0.0, 1.0) * 0.18;
-    canvas.drawCircle(
-      size.center(Offset.zero),
-      size.shortestSide * (0.20 + progress * 0.50),
-      Paint()..color = winnerColor.withOpacity(glowOpacity),
-    );
+    final shortestSide = size.shortestSide;
+    final winnerLight = Color.lerp(winnerColor, Colors.white, 0.42)!;
+    final winnerWarm = Color.lerp(winnerColor, const Color(0xffffd166), 0.34)!;
+    final sparkPaint = Paint()
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final sparkFillPaint = Paint()..style = PaintingStyle.fill;
 
-    const particleCount = 24;
-    for (int index = 0; index < particleCount; index++) {
-      final delay = (index % 6) * 0.035;
-      final local = ((progress - delay) / (1 - delay)).clamp(0.0, 1.0);
-      if (local <= 0) continue;
-      final lane = ((index * 37) % 101) / 100;
-      final sway = sin(local * pi * 2 + index) * size.width * 0.025;
-      final x = lane * size.width + sway;
-      final y = -18 + Curves.easeIn.transform(local) * (size.height + 36);
-      final opacity = local > 0.82 ? (1 - local) / 0.18 : 0.88;
-      final color = switch (index % 3) {
-        0 => winnerColor,
-        1 => const Color(0xffffd166),
-        _ => Colors.white,
-      };
+    for (int burstIndex = 0; burstIndex < _bursts.length; burstIndex++) {
+      final burst = _bursts[burstIndex];
+      final rawProgress = (progress - burst.delay) / burst.duration;
+      if (rawProgress <= 0 || rawProgress >= 1) continue;
 
-      canvas.save();
-      canvas.translate(x, y);
-      canvas.rotate(local * pi * (1.5 + (index % 4) * 0.35));
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset.zero,
-            width: 5 + (index % 3) * 1.5,
-            height: 10 + (index % 2) * 3,
-          ),
-          const Radius.circular(2),
-        ),
-        Paint()..color = color.withOpacity(opacity.clamp(0.0, 1.0)),
-      );
-      canvas.restore();
+      final local = rawProgress.clamp(0.0, 1.0);
+      final expansion = Curves.easeOutCubic.transform(local);
+      final ignition = (local / 0.06).clamp(0.0, 1.0);
+      final opacity = ignition * pow(1 - local, 1.25).toDouble();
+      final center = Offset(size.width * burst.x, size.height * burst.y);
+      final baseRadius = shortestSide * 0.17 * burst.scale;
+
+      if (local < 0.24) {
+        final ringProgress = local / 0.24;
+        canvas.drawCircle(
+          center,
+          baseRadius * 0.24 * ringProgress,
+          Paint()
+            ..color = winnerLight.withOpacity((1 - ringProgress) * 0.55)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.4,
+        );
+      }
+
+      for (int spark = 0; spark < burst.sparkCount; spark++) {
+        final angle = (spark * 2 * pi / burst.sparkCount) + burstIndex * 0.37;
+        final direction = Offset(cos(angle), sin(angle));
+        final speedVariation =
+            0.82 + ((spark * 17 + burstIndex * 11) % 7) * 0.05;
+        final distance = baseRadius * expansion * speedVariation;
+        final gravity = shortestSide * 0.038 * local * local;
+        final point =
+            center +
+            direction * distance +
+            Offset(0, gravity * (0.75 + speedVariation * 0.25));
+        final trailLength = shortestSide * 0.026 * (1 - local);
+        final color = switch ((spark + burst.colorOffset) % 4) {
+          0 => winnerColor,
+          1 => winnerLight,
+          2 => winnerWarm,
+          _ => Colors.white,
+        };
+
+        sparkPaint
+          ..color = color.withOpacity(opacity.clamp(0.0, 1.0))
+          ..strokeWidth = 1.1 + (spark % 3) * 0.35;
+        sparkFillPaint.color = color.withOpacity(opacity.clamp(0.0, 1.0));
+        canvas.drawLine(point - direction * trailLength, point, sparkPaint);
+        canvas.drawCircle(point, 1.1 + (spark % 2) * 0.55, sparkFillPaint);
+      }
     }
   }
 
   @override
-  bool shouldRepaint(covariant _VictoryParticlePainter oldDelegate) {
+  bool shouldRepaint(covariant _VictoryFireworksPainter oldDelegate) {
     return oldDelegate.progress != progress ||
         oldDelegate.winnerColor != winnerColor;
   }
+}
+
+class _FireworkBurst {
+  final double x;
+  final double y;
+  final double delay;
+  final double duration;
+  final double scale;
+  final int colorOffset;
+  final int sparkCount;
+
+  const _FireworkBurst(
+    this.x,
+    this.y,
+    this.delay,
+    this.duration,
+    this.scale,
+    this.colorOffset,
+    this.sparkCount,
+  );
 }
