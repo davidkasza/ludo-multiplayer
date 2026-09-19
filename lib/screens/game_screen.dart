@@ -7,6 +7,7 @@ import '../components/game/quick_chat_bar.dart';
 import '../components/game/room_code_bar.dart';
 import '../components/game_board.dart';
 import '../components/game_controls.dart';
+import '../components/presentation/gameplay_feedback_overlay.dart';
 import '../controllers/ludo_controller.dart';
 import '../theme/app_colors.dart';
 
@@ -47,7 +48,10 @@ class GameScreen extends StatelessWidget {
                   const SizedBox(height: 10),
                   Expanded(
                     child: Center(
-                      child: GameBoard(controller: controller),
+                      child: GameplayFeedbackOverlay(
+                        controller: controller,
+                        child: GameBoard(controller: controller),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),

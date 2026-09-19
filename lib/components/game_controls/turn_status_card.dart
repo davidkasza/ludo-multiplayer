@@ -33,6 +33,14 @@ class TurnStatusCard extends StatelessWidget {
       game?.playerDiceSkins,
       rollingPlayerId,
     );
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final turnLabel = game?.status == 'waiting'
+        ? 'Waiting...'
+        : iAmFinished
+        ? 'YOU FINISHED #$myPlacement'
+        : c.isVisualMyTurn
+        ? 'YOUR TURN!'
+        : c.getPlayerDisplayTitle(currentTurnId);
 
     return AnimatedBuilder(
       animation: pulseAnimation,
@@ -69,55 +77,49 @@ class TurnStatusCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Flexible(
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: currentStyle.base,
-                  child: Icon(
-                    currentIsAutomated ? Icons.smart_toy : Icons.person,
-                    color: currentStyle.dark,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: ValueListenableBuilder<int>(
-                    valueListenable: c.turnSecondsNotifier,
-                    builder: (context, seconds, child) => Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            game?.status == 'waiting'
-                                ? 'Waiting...'
-                                : iAmFinished
-                                ? 'YOU FINISHED #$myPlacement'
-                                : c.isVisualMyTurn
-                                ? 'YOUR TURN!'
-                                : c.getPlayerDisplayTitle(currentTurnId),
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 13,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        if (game?.status == 'playing' &&
-                            !iAmFinished &&
-                            !c.isDicePresentationActive &&
-                            c.visualActiveMove == null) ...[
-                          const SizedBox(width: 7),
-                          _CountdownBadge(
-                            seconds: seconds,
-                            automated: currentIsAutomated,
-                          ),
-                        ],
-                      ],
+            child: ValueListenableBuilder<int>(
+              valueListenable: c.turnSecondsNotifier,
+              builder: (context, seconds, child) => Row(
+                children: [
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: reduceMotion
+                          ? Duration.zero
+                          : const Duration(milliseconds: 280),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        if (reduceMotion) return child;
+                        final slide = Tween<Offset>(
+                          begin: const Offset(0.08, 0),
+                          end: Offset.zero,
+                        ).animate(animation);
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(position: slide, child: child),
+                        );
+                      },
+                      child: _TurnIdentity(
+                        key: ValueKey('$currentTurnId:$turnLabel'),
+                        label: turnLabel,
+                        color: currentStyle.base,
+                        iconColor: currentStyle.dark,
+                        automated: currentIsAutomated,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                  if (game?.status == 'playing' &&
+                      !iAmFinished &&
+                      !c.isDicePresentationActive &&
+                      c.visualActiveMove == null) ...[
+                    const SizedBox(width: 7),
+                    _CountdownBadge(
+                      seconds: seconds,
+                      automated: currentIsAutomated,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 10),
@@ -135,6 +137,50 @@ class TurnStatusCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TurnIdentity extends StatelessWidget {
+  final String label;
+  final Color color;
+  final Color iconColor;
+  final bool automated;
+
+  const _TurnIdentity({
+    super.key,
+    required this.label,
+    required this.color,
+    required this.iconColor,
+    required this.automated,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 16,
+          backgroundColor: color,
+          child: Icon(
+            automated ? Icons.smart_toy : Icons.person,
+            color: iconColor,
+            size: 20,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -7,14 +8,100 @@ import '../game/ludo_board_mapper.dart';
 import '../game/ludo_board_theme.dart';
 import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
+import 'presentation/quick_chat_bubble.dart';
 import 'painters/board_painters.dart';
 
-class GameBoard extends StatelessWidget {
+class GameBoard extends StatefulWidget {
   final LudoController controller;
 
   const GameBoard({super.key, required this.controller});
 
   static const double maxBoardSize = 500.0;
+
+  @override
+  State<GameBoard> createState() => _GameBoardState();
+}
+
+class _GameBoardState extends State<GameBoard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _selectionController;
+  bool _reduceMotion = false;
+  bool _selectionPending = false;
+  int? _selectionTurnVersion;
+
+  LudoController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectionController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1050),
+    );
+    controller.addListener(_handleControllerChanged);
+    _syncSelectionAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant GameBoard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != controller) {
+      oldWidget.controller.removeListener(_handleControllerChanged);
+      controller.addListener(_handleControllerChanged);
+      _selectionPending = false;
+      _selectionTurnVersion = null;
+      _syncSelectionAnimation();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (_reduceMotion != reduceMotion) {
+      _reduceMotion = reduceMotion;
+      _syncSelectionAnimation();
+    }
+  }
+
+  void _handleControllerChanged() {
+    if (_selectionPending &&
+        (controller.visualActiveMove != null ||
+            controller.game?.turnVersion != _selectionTurnVersion ||
+            !controller.canSelectPiece)) {
+      _selectionPending = false;
+      _selectionTurnVersion = null;
+    }
+    _syncSelectionAnimation();
+  }
+
+  void _syncSelectionAnimation() {
+    final shouldAnimate =
+        _hasSelectablePiece && !_selectionPending && !_reduceMotion;
+    if (shouldAnimate && !_selectionController.isAnimating) {
+      _selectionController.repeat();
+    } else if (!shouldAnimate && _selectionController.isAnimating) {
+      _selectionController
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  bool get _hasSelectablePiece {
+    final game = controller.game;
+    if (game == null || !controller.canSelectPiece) return false;
+    return controller.getMyPieces().any(
+      (piece) =>
+          controller.isValidMove(piece: piece, diceValue: game.diceValue),
+    );
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(_handleControllerChanged);
+    _selectionController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,13 +116,21 @@ class GameBoard extends StatelessWidget {
           controller.game?.maxPlayers ?? 4,
         ).toSet();
         final boardSize = min(
-          maxBoardSize,
+          GameBoard.maxBoardSize,
           min(constraints.maxWidth, constraints.maxHeight),
+        );
+        final chat = controller.realtimeChat ?? controller.game?.activeChat;
+        final chatSeat = chat == null
+            ? 0
+            : controller.getPlayerIndex(chat.sender);
+        final chatStyle = controller.colorStyleForSeat(
+          chatSeat < 0 ? 0 : chatSeat,
         );
 
         return Center(
           child: GestureDetector(
-            onTapDown: (details) => _handleTap(details, boardSize, boardMapper),
+            onTapDown: (details) =>
+                unawaited(_handleTap(details, boardSize, boardMapper)),
             child: Container(
               width: boardSize,
               height: boardSize,
@@ -72,6 +167,7 @@ class GameBoard extends StatelessWidget {
                           animation: Listenable.merge([
                             controller,
                             controller.moveAnimationFrameNotifier,
+                            _selectionController,
                           ]),
                           builder: (context, _) {
                             return CustomPaint(
@@ -80,18 +176,36 @@ class GameBoard extends StatelessWidget {
                                 game: controller.game,
                                 currentUserId: controller.user?.uid,
                                 myPlayerIndex: controller.myPlayerIndex,
-                                canSelectPieces: controller.canSelectPiece,
+                                canSelectPieces:
+                                    controller.canSelectPiece &&
+                                    !_selectionPending,
                                 animationFrame:
                                     controller.moveAnimationFrameNotifier.value,
                                 visualActiveMove: controller.visualActiveMove,
                                 visualMoveElapsedMs:
                                     controller.visualMoveElapsedMs,
+                                selectionProgress: _selectionController.value,
+                                reduceMotion: _reduceMotion,
                                 seatColorIds: controller.seatColorIds,
                                 boardMapper: boardMapper,
                               ),
                             );
                           },
                         ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: QuickChatBubble(
+                        roomId: controller.gameId,
+                        chat: chat,
+                        nowMs: controller
+                            .estimatedServerNow
+                            .millisecondsSinceEpoch,
+                        senderSeat: chatSeat,
+                        senderName: chat == null
+                            ? ''
+                            : controller.getPlayerDisplayTitle(chat.sender),
+                        color: chatStyle.bright,
                       ),
                     ),
                   ],
@@ -135,11 +249,11 @@ class GameBoard extends StatelessWidget {
     }
   }
 
-  void _handleTap(
+  Future<void> _handleTap(
     TapDownDetails details,
     double boardSize,
     LudoBoardMapper boardMapper,
-  ) {
+  ) async {
     final game = controller.game;
 
     if (game == null || !controller.canSelectPiece) return;
@@ -150,6 +264,7 @@ class GameBoard extends StatelessWidget {
       renderedBoardExtent: boardSize,
     );
 
+    int? selectedPieceId;
     for (final piece in controller.getMyPieces()) {
       if (!controller.isValidMove(piece: piece, diceValue: game.diceValue)) {
         continue;
@@ -160,9 +275,27 @@ class GameBoard extends StatelessWidget {
         piece: piece,
         playerIndex: controller.myPlayerIndex,
       )) {
-        controller.movePiece(piece.id);
+        selectedPieceId = piece.id;
         break;
       }
     }
+
+    if (selectedPieceId == null || _selectionPending) return;
+    _selectionPending = true;
+    _selectionTurnVersion = game.turnVersion;
+    _syncSelectionAnimation();
+    if (mounted) setState(() {});
+
+    await controller.movePiece(selectedPieceId);
+    if (!mounted ||
+        controller.visualActiveMove != null ||
+        controller.game?.turnVersion != _selectionTurnVersion) {
+      return;
+    }
+
+    _selectionPending = false;
+    _selectionTurnVersion = null;
+    _syncSelectionAnimation();
+    setState(() {});
   }
 }

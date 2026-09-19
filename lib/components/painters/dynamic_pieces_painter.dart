@@ -20,6 +20,8 @@ class DynamicPiecesPainter extends CustomPainter {
   final double animationFrame;
   final ActiveMove? visualActiveMove;
   final int visualMoveElapsedMs;
+  final double selectionProgress;
+  final bool reduceMotion;
   final List<String> seatColorIds;
   final LudoBoardMapper boardMapper;
 
@@ -31,6 +33,8 @@ class DynamicPiecesPainter extends CustomPainter {
     required this.animationFrame,
     required this.visualActiveMove,
     required this.visualMoveElapsedMs,
+    this.selectionProgress = 0,
+    this.reduceMotion = false,
     required this.seatColorIds,
     required this.boardMapper,
   });
@@ -53,6 +57,16 @@ class DynamicPiecesPainter extends CustomPainter {
             move: activeMove,
             elapsedMs: visualMoveElapsedMs,
           );
+    final finishFrame = activeMove == null
+        ? const FinishPresentationFrame.complete()
+        : LudoPresentation.finishFrame(
+            move: activeMove,
+            elapsedMs: visualMoveElapsedMs,
+          );
+    final selectablePulse = LudoPresentation.selectablePulse(
+      selectionProgress,
+      reduceMotion: reduceMotion,
+    );
 
     for (final playerId in game!.players) {
       final piecesList = game!.pieces[playerId] ?? const <LudoPiece>[];
@@ -186,6 +200,16 @@ class DynamicPiecesPainter extends CustomPainter {
           animationGroupKey = 'attacker_${activeMove.playerId}_${piece.id}';
         }
 
+        if (isSharedMoving &&
+            finishFrame.phase == FinishPresentationPhase.celebrating) {
+          if (!reduceMotion) {
+            motionScale *= 1 + finishFrame.pulse * 0.14;
+            elevation = finishFrame.pulse * cellSize * 0.08;
+          }
+          isMotionActive = true;
+          animationGroupKey = 'finish_${activeMove.playerId}_${piece.id}';
+        }
+
         groundCenter ??= _pieceCenter(
           piece: displayPiece,
           playerIndex: playerIndex,
@@ -227,6 +251,12 @@ class DynamicPiecesPainter extends CustomPainter {
       canvas: canvas,
       activeMove: activeMove,
       frame: captureFrame,
+      cellSize: cellSize,
+    );
+    _drawFinishEffect(
+      canvas: canvas,
+      activeMove: activeMove,
+      frame: finishFrame,
       cellSize: cellSize,
     );
 
@@ -278,6 +308,7 @@ class DynamicPiecesPainter extends CustomPainter {
             center: centers[index],
             color: drawable.colorBright,
             cellSize: cellSize,
+            pulse: selectablePulse,
           );
         }
       }
@@ -286,6 +317,14 @@ class DynamicPiecesPainter extends CustomPainter {
         final drawable = group[index];
         final center = centers[index];
         final isAtGoal = drawable.piece.inHome && drawable.piece.pos == 5;
+        final isSelectable =
+            drawable.isCurrentPlayer &&
+            LudoPresentation.isPieceSelectable(
+              canSelectPieces: canSelectPieces,
+              piece: drawable.piece,
+              diceValue: game!.diceValue,
+            );
+        final selectionScale = isSelectable ? 1 + selectablePulse * 0.025 : 1.0;
 
         if (drawable.rotation != 0) {
           canvas.save();
@@ -301,7 +340,10 @@ class DynamicPiecesPainter extends CustomPainter {
           dark: drawable.colorDark,
           cellSize: cellSize,
           isAtGoal: isAtGoal,
-          scale: (group.length > 1 ? 0.84 : 1.0) * drawable.motionScale,
+          scale:
+              (group.length > 1 ? 0.84 : 1.0) *
+              drawable.motionScale *
+              selectionScale,
           elevation: drawable.elevation,
         );
 
@@ -392,6 +434,70 @@ class DynamicPiecesPainter extends CustomPainter {
     );
   }
 
+  void _drawFinishEffect({
+    required Canvas canvas,
+    required ActiveMove? activeMove,
+    required FinishPresentationFrame frame,
+    required double cellSize,
+  }) {
+    if (activeMove == null ||
+        frame.phase != FinishPresentationPhase.celebrating) {
+      return;
+    }
+
+    final playerIndex =
+        game!.playerSeats[activeMove.playerId] ??
+        game!.players.indexOf(activeMove.playerId);
+    if (playerIndex < 0) return;
+    final center = boardMapper.geometry.goalCenter(playerIndex);
+    final colorId = seatColorIds.length > playerIndex
+        ? seatColorIds[playerIndex]
+        : LudoPalette.defaultForSeat(playerIndex.clamp(0, 3));
+    final color = LudoPalette.style(colorId).bright;
+    final pulse = reduceMotion ? 0.45 : frame.pulse;
+    final opacity = reduceMotion ? 0.62 : frame.glowOpacity;
+    final radius = cellSize * (0.45 + pulse * 0.45);
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = color.withOpacity(opacity * 0.16)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = Colors.white.withOpacity(opacity * 0.82)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = cellSize * 0.055,
+    );
+    canvas.drawCircle(
+      center,
+      radius * 0.76,
+      Paint()
+        ..color = color.withOpacity(opacity * 0.90)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = cellSize * 0.045,
+    );
+
+    if (reduceMotion) return;
+    for (int index = 0; index < 8; index++) {
+      final angle = index * pi / 4;
+      final distance = cellSize * (0.34 + frame.progress * 0.72);
+      final particleCenter = center + Offset(cos(angle), sin(angle)) * distance;
+      canvas.drawCircle(
+        particleCenter,
+        cellSize * (0.055 + (1 - frame.progress) * 0.035),
+        Paint()
+          ..color = (index.isEven ? Colors.white : color).withOpacity(
+            opacity * 0.86,
+          ),
+      );
+    }
+  }
+
   Offset _getStackOffset({
     required int index,
     required int count,
@@ -426,6 +532,8 @@ class DynamicPiecesPainter extends CustomPainter {
         oldDelegate.animationFrame != animationFrame ||
         oldDelegate.visualActiveMove != visualActiveMove ||
         oldDelegate.visualMoveElapsedMs != visualMoveElapsedMs ||
+        oldDelegate.selectionProgress != selectionProgress ||
+        oldDelegate.reduceMotion != reduceMotion ||
         oldDelegate.boardMapper.geometry != boardMapper.geometry ||
         !_sameColors(oldDelegate.seatColorIds, seatColorIds);
   }

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import '../models/ludo_models.dart';
 import 'ludo_rules.dart';
 
@@ -12,6 +14,9 @@ class LudoPresentation {
   /// Capture timings begin only after the attacker's normal movement path.
   static const int captureImpactMs = 180;
   static const int captureReturnMs = 520;
+
+  /// A short success beat after a piece has visibly reached the final goal.
+  static const int finishCelebrationMs = 520;
 
   static DicePresentationFrame diceFrame({
     required int elapsedMs,
@@ -42,8 +47,68 @@ class LudoPresentation {
   }
 
   static int movePresentationDurationMs(ActiveMove move) {
-    if (move.capturedPieces.isEmpty) return move.totalDurationMs;
-    return move.totalDurationMs + captureImpactMs + captureReturnMs;
+    var duration = move.totalDurationMs;
+    if (move.capturedPieces.isNotEmpty) {
+      duration += captureImpactMs + captureReturnMs;
+    }
+    if (moveReachesGoal(move)) duration += finishCelebrationMs;
+    return duration;
+  }
+
+  static bool moveReachesGoal(ActiveMove move) {
+    if (move.steps.length < 2) return false;
+    final before = move.steps[move.steps.length - 2];
+    final destination = move.steps.last;
+    return destination.inHome &&
+        destination.pos == LudoRules.goalPosition &&
+        !(before.inHome && before.pos == LudoRules.goalPosition);
+  }
+
+  /// Infers the committed roll from the immutable visual path.
+  ///
+  /// A normal six contains six adjacent steps. Leaving Base is the one
+  /// exception: it is represented by a single Base-to-start step, but the
+  /// rules only permit that transition after a six.
+  static bool moveWasRolledSix(ActiveMove move) {
+    if (move.steps.length < 2) return false;
+    final origin = move.steps.first;
+    return (!origin.inHome && origin.pos == LudoRules.basePosition) ||
+        move.steps.length - 1 == 6;
+  }
+
+  static int _finishPresentationStartMs(ActiveMove move) {
+    return move.totalDurationMs +
+        (move.capturedPieces.isEmpty ? 0 : captureImpactMs + captureReturnMs);
+  }
+
+  static FinishPresentationFrame finishFrame({
+    required ActiveMove move,
+    required int elapsedMs,
+  }) {
+    if (!moveReachesGoal(move)) {
+      return const FinishPresentationFrame.complete();
+    }
+
+    final elapsed = elapsedMs.clamp(0, movePresentationDurationMs(move));
+    final startMs = _finishPresentationStartMs(move);
+    if (elapsed < startMs) {
+      return const FinishPresentationFrame(
+        phase: FinishPresentationPhase.approaching,
+      );
+    }
+
+    final celebrationElapsed = elapsed - startMs;
+    if (celebrationElapsed < finishCelebrationMs) {
+      final progress = celebrationElapsed / finishCelebrationMs;
+      return FinishPresentationFrame(
+        phase: FinishPresentationPhase.celebrating,
+        progress: progress,
+        pulse: sin(progress * pi),
+        glowOpacity: 1 - progress,
+      );
+    }
+
+    return const FinishPresentationFrame.complete();
   }
 
   static CapturePresentationFrame captureFrame({
@@ -106,6 +171,85 @@ class LudoPresentation {
     required int diceValue,
   }) {
     return canSelectPieces && LudoRules.isValidMove(piece, diceValue);
+  }
+
+  static double selectablePulse(
+    double controllerProgress, {
+    required bool reduceMotion,
+  }) {
+    if (reduceMotion) return 0.45;
+    final normalized = controllerProgress.clamp(0.0, 1.0);
+    return 0.5 - 0.5 * cos(normalized * pi * 2);
+  }
+
+  static ExtraTurnReason? extraTurnReasonAfterMove({
+    required ActiveMove move,
+    required String authoritativeTurnPlayerId,
+    required bool matchFinished,
+    required bool movingPlayerFinished,
+  }) {
+    if (matchFinished ||
+        movingPlayerFinished ||
+        authoritativeTurnPlayerId != move.playerId) {
+      return null;
+    }
+    if (moveReachesGoal(move)) return ExtraTurnReason.goal;
+    if (move.capturedPieces.isNotEmpty) return ExtraTurnReason.capture;
+    if (moveWasRolledSix(move)) return ExtraTurnReason.six;
+    return null;
+  }
+
+  static ExtraTurnReason? extraTurnReasonAfterRoll({
+    required ActiveDiceRoll roll,
+    required String authoritativeTurnPlayerId,
+    required bool matchFinished,
+    required bool hasValidMove,
+  }) {
+    if (!matchFinished &&
+        !hasValidMove &&
+        roll.result == 6 &&
+        authoritativeTurnPlayerId == roll.playerId) {
+      return ExtraTurnReason.six;
+    }
+    return null;
+  }
+
+  static bool isCurrentActionForFeedback({
+    required int actionTurnVersion,
+    required int currentTurnVersion,
+    required String lastActionType,
+    required String expectedActionType,
+  }) {
+    if (actionTurnVersion == 0) {
+      // Legacy descriptors have no version. Accept them only while the room
+      // still describes the same action type (or predates lastActionType), so
+      // a newer action cannot revive stale feedback.
+      return lastActionType.isEmpty || lastActionType == expectedActionType;
+    }
+    return actionTurnVersion == currentTurnVersion &&
+        lastActionType == expectedActionType;
+  }
+
+  static bool shouldPresentQuickChat({
+    required LudoChat chat,
+    required int nowMs,
+    int maxAgeMs = 12000,
+  }) {
+    if (chat.sender.isEmpty || chat.message.isEmpty || chat.timestamp <= 0) {
+      return false;
+    }
+    final age = nowMs - chat.timestamp;
+    return age >= -2000 && age <= maxAgeMs;
+  }
+
+  static bool shouldCelebrateVictory({
+    required bool matchWasObservedInProgress,
+    required bool authoritativeMatchFinished,
+    required bool presentationComplete,
+  }) {
+    return matchWasObservedInProgress &&
+        authoritativeMatchFinished &&
+        presentationComplete;
   }
 
   static double _smoothStep(double value) {
@@ -194,3 +338,27 @@ class CapturePresentationFrame {
       impactShake = 0,
       returnProgress = 1;
 }
+
+enum FinishPresentationPhase { approaching, celebrating, complete }
+
+class FinishPresentationFrame {
+  final FinishPresentationPhase phase;
+  final double progress;
+  final double pulse;
+  final double glowOpacity;
+
+  const FinishPresentationFrame({
+    required this.phase,
+    this.progress = 0,
+    this.pulse = 0,
+    this.glowOpacity = 0,
+  });
+
+  const FinishPresentationFrame.complete()
+    : phase = FinishPresentationPhase.complete,
+      progress = 1,
+      pulse = 0,
+      glowOpacity = 0;
+}
+
+enum ExtraTurnReason { six, capture, goal }

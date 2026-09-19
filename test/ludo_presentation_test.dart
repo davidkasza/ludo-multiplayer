@@ -185,6 +185,258 @@ void main() {
     });
   });
 
+  group('finish presentation', () {
+    final move = ActiveMove(
+      actionId: 'goal-action',
+      playerId: 'blue',
+      pieceId: 4,
+      startedAt: 0,
+      stepDurationMs: 250,
+      steps: const [
+        ActiveMoveStep(pos: 3, inHome: true),
+        ActiveMoveStep(pos: 4, inHome: true),
+        ActiveMoveStep(pos: 5, inHome: true),
+      ],
+      stateApplied: true,
+    );
+
+    test('starts only after the final normal movement step', () {
+      final beforeLanding = LudoPresentation.finishFrame(
+        move: move,
+        elapsedMs: move.totalDurationMs - 1,
+      );
+      final landed = LudoPresentation.finishFrame(
+        move: move,
+        elapsedMs: move.totalDurationMs,
+      );
+
+      expect(LudoPresentation.moveReachesGoal(move), isTrue);
+      expect(beforeLanding.phase, FinishPresentationPhase.approaching);
+      expect(landed.phase, FinishPresentationPhase.celebrating);
+      expect(landed.progress, 0);
+      expect(
+        LudoPresentation.movePresentationDurationMs(move),
+        move.totalDurationMs + LudoPresentation.finishCelebrationMs,
+      );
+    });
+
+    test('pulses briefly and reconnect skips an expired finish effect', () {
+      final middle = LudoPresentation.finishFrame(
+        move: move,
+        elapsedMs:
+            move.totalDurationMs + LudoPresentation.finishCelebrationMs ~/ 2,
+      );
+      final expired = LudoPresentation.finishFrame(
+        move: move,
+        elapsedMs: LudoPresentation.movePresentationDurationMs(move),
+      );
+
+      expect(middle.phase, FinishPresentationPhase.celebrating);
+      expect(middle.pulse, closeTo(1, 0.0001));
+      expect(expired.phase, FinishPresentationPhase.complete);
+    });
+
+    test('presentation calculations never mutate the authoritative action', () {
+      final originalSteps = List<ActiveMoveStep>.from(move.steps);
+      LudoPresentation.finishFrame(move: move, elapsedMs: 625);
+      LudoPresentation.captureFrame(move: move, elapsedMs: 625);
+
+      expect(move.steps, orderedEquals(originalSteps));
+      expect(move.stateApplied, isTrue);
+      expect(move.playerId, 'blue');
+    });
+  });
+
+  group('extra-turn feedback', () {
+    ActiveMove move({
+      List<ActiveMoveStep> steps = const [
+        ActiveMoveStep(pos: 1, inHome: false),
+        ActiveMoveStep(pos: 2, inHome: false),
+      ],
+      List<ActiveMoveCapture> captures = const [],
+    }) {
+      return ActiveMove(
+        playerId: 'blue',
+        pieceId: 1,
+        startedAt: 0,
+        stepDurationMs: 250,
+        steps: steps,
+        capturedPieces: captures,
+        stateApplied: true,
+      );
+    }
+
+    test('uses the most meaningful committed extra-turn reason', () {
+      expect(
+        LudoPresentation.extraTurnReasonAfterMove(
+          move: move(
+            steps: const [
+              ActiveMoveStep(pos: 4, inHome: true),
+              ActiveMoveStep(pos: 5, inHome: true),
+            ],
+          ),
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          movingPlayerFinished: false,
+        ),
+        ExtraTurnReason.goal,
+      );
+      expect(
+        LudoPresentation.extraTurnReasonAfterMove(
+          move: move(
+            captures: const [
+              ActiveMoveCapture(
+                playerId: 'red',
+                pieceId: 2,
+                from: ActiveMoveStep(pos: 8, inHome: false),
+              ),
+            ],
+          ),
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          movingPlayerFinished: false,
+        ),
+        ExtraTurnReason.capture,
+      );
+      expect(
+        LudoPresentation.extraTurnReasonAfterMove(
+          move: move(
+            steps: const [
+              ActiveMoveStep(pos: 0, inHome: false),
+              ActiveMoveStep(pos: 1, inHome: false),
+              ActiveMoveStep(pos: 2, inHome: false),
+              ActiveMoveStep(pos: 3, inHome: false),
+              ActiveMoveStep(pos: 4, inHome: false),
+              ActiveMoveStep(pos: 5, inHome: false),
+              ActiveMoveStep(pos: 6, inHome: false),
+            ],
+          ),
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          movingPlayerFinished: false,
+        ),
+        ExtraTurnReason.six,
+      );
+
+      final baseExit = move(
+        steps: const [
+          ActiveMoveStep(pos: -1, inHome: false),
+          ActiveMoveStep(pos: 0, inHome: false),
+        ],
+      );
+      expect(LudoPresentation.moveWasRolledSix(baseExit), isTrue);
+    });
+
+    test('non-extra turns and finished players do not show feedback', () {
+      expect(
+        LudoPresentation.extraTurnReasonAfterMove(
+          move: move(),
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          movingPlayerFinished: false,
+        ),
+        isNull,
+        reason: 'the move path, not a mutable room dice value, drives this',
+      );
+      expect(
+        LudoPresentation.extraTurnReasonAfterMove(
+          move: move(),
+          authoritativeTurnPlayerId: 'red',
+          matchFinished: false,
+          movingPlayerFinished: false,
+        ),
+        isNull,
+      );
+      expect(
+        LudoPresentation.extraTurnReasonAfterMove(
+          move: move(),
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          movingPlayerFinished: true,
+        ),
+        isNull,
+      );
+    });
+
+    test('a six with no legal move produces roll-again feedback', () {
+      const roll = ActiveDiceRoll(
+        playerId: 'blue',
+        startedAt: 0,
+        durationMs: 800,
+        result: 6,
+        stateApplied: true,
+      );
+      expect(
+        LudoPresentation.extraTurnReasonAfterRoll(
+          roll: roll,
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          hasValidMove: false,
+        ),
+        ExtraTurnReason.six,
+      );
+      expect(
+        LudoPresentation.extraTurnReasonAfterRoll(
+          roll: roll,
+          authoritativeTurnPlayerId: 'blue',
+          matchFinished: false,
+          hasValidMove: true,
+        ),
+        isNull,
+      );
+    });
+
+    test('stale or superseded actions cannot emit delayed feedback', () {
+      expect(
+        LudoPresentation.isCurrentActionForFeedback(
+          actionTurnVersion: 8,
+          currentTurnVersion: 8,
+          lastActionType: 'move',
+          expectedActionType: 'move',
+        ),
+        isTrue,
+      );
+      expect(
+        LudoPresentation.isCurrentActionForFeedback(
+          actionTurnVersion: 8,
+          currentTurnVersion: 9,
+          lastActionType: 'dice',
+          expectedActionType: 'move',
+        ),
+        isFalse,
+      );
+      expect(
+        LudoPresentation.isCurrentActionForFeedback(
+          actionTurnVersion: 8,
+          currentTurnVersion: 8,
+          lastActionType: 'move',
+          expectedActionType: 'dice',
+        ),
+        isFalse,
+      );
+      expect(
+        LudoPresentation.isCurrentActionForFeedback(
+          actionTurnVersion: 0,
+          currentTurnVersion: 9,
+          lastActionType: 'dice',
+          expectedActionType: 'move',
+        ),
+        isFalse,
+        reason: 'a newer typed action must supersede a legacy descriptor',
+      );
+      expect(
+        LudoPresentation.isCurrentActionForFeedback(
+          actionTurnVersion: 0,
+          currentTurnVersion: 0,
+          lastActionType: '',
+          expectedActionType: 'move',
+        ),
+        isTrue,
+        reason: 'fully legacy rooms remain presentation-compatible',
+      );
+    });
+  });
+
   group('piece selection sequencing', () {
     bool canSelect({
       bool isPlaying = true,
@@ -218,6 +470,17 @@ void main() {
       expect(canSelect(isWaitingForMove: false), isFalse);
       expect(canSelect(isAuthoritativeTurn: false), isFalse);
     });
+
+    test('reduced motion keeps a stable selectable indication', () {
+      expect(
+        LudoPresentation.selectablePulse(0, reduceMotion: true),
+        LudoPresentation.selectablePulse(0.8, reduceMotion: true),
+      );
+      expect(
+        LudoPresentation.selectablePulse(0.5, reduceMotion: false),
+        greaterThan(LudoPresentation.selectablePulse(0, reduceMotion: false)),
+      );
+    });
   });
 
   group('end-game sequencing', () {
@@ -243,6 +506,26 @@ void main() {
       );
     });
 
+    test('celebrates only a match observed locally before it finished', () {
+      expect(
+        LudoPresentation.shouldCelebrateVictory(
+          matchWasObservedInProgress: true,
+          authoritativeMatchFinished: true,
+          presentationComplete: true,
+        ),
+        isTrue,
+      );
+      expect(
+        LudoPresentation.shouldCelebrateVictory(
+          matchWasObservedInProgress: false,
+          authoritativeMatchFinished: true,
+          presentationComplete: true,
+        ),
+        isFalse,
+        reason: 'an already-finished reconnect must not replay celebration',
+      );
+    });
+
     test('does not visually finish the moving player early', () {
       expect(
         LudoPresentation.isVisuallyFinished(
@@ -258,6 +541,26 @@ void main() {
           playerId: 'blue',
         ),
         isTrue,
+      );
+    });
+  });
+
+  group('quick-chat presentation', () {
+    test('accepts recent messages and rejects stale reconnect values', () {
+      const recent = LudoChat(
+        sender: 'blue',
+        message: 'Good luck!',
+        timestamp: 9000,
+      );
+      const stale = LudoChat(sender: 'red', message: 'Ouch!', timestamp: 1000);
+
+      expect(
+        LudoPresentation.shouldPresentQuickChat(chat: recent, nowMs: 10000),
+        isTrue,
+      );
+      expect(
+        LudoPresentation.shouldPresentQuickChat(chat: stale, nowMs: 20000),
+        isFalse,
       );
     });
   });

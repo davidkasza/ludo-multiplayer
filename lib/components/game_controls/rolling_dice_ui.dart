@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../game/ludo_animation.dart';
@@ -29,8 +31,10 @@ class RollingDiceUI extends StatefulWidget {
 }
 
 class _RollingDiceUIState extends State<RollingDiceUI>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _animController;
+  late final AnimationController _specialController;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -40,7 +44,23 @@ class _RollingDiceUIState extends State<RollingDiceUI>
       vsync: this,
       duration: widget.rollDuration,
     );
+    _specialController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+    );
     if (widget.isRolling) _startRoll();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    if (reduceMotion && !_reduceMotion) {
+      _specialController
+        ..stop()
+        ..value = 0;
+    }
+    _reduceMotion = reduceMotion;
   }
 
   @override
@@ -54,10 +74,14 @@ class _RollingDiceUIState extends State<RollingDiceUI>
     } else if (!widget.isRolling && oldWidget.isRolling) {
       _animController.stop();
       _animController.value = 0.0;
+      _startSpecialFeedback();
     }
   }
 
   void _startRoll() {
+    _specialController
+      ..stop()
+      ..value = 0;
     _animController
       ..stop()
       ..duration = widget.rollDuration
@@ -67,16 +91,24 @@ class _RollingDiceUIState extends State<RollingDiceUI>
     }
   }
 
+  void _startSpecialFeedback() {
+    if (_reduceMotion || widget.value != 6 || widget.animationKey == null) {
+      return;
+    }
+    _specialController.forward(from: 0);
+  }
+
   @override
   void dispose() {
     _animController.dispose();
+    _specialController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _animController,
+      animation: Listenable.merge([_animController, _specialController]),
       builder: (context, child) {
         final result = widget.value >= 1 && widget.value <= 6
             ? widget.value
@@ -85,6 +117,8 @@ class _RollingDiceUIState extends State<RollingDiceUI>
             ? LudoAnimation.diceFrame(_animController.value, result)
             : LudoAnimation.diceFrame(1, result);
         final jumpY = -motion.lift * widget.size * 0.78;
+        final specialProgress = _specialController.value;
+        final specialPulse = sin(specialProgress * pi);
 
         return SizedBox.square(
           dimension: widget.size,
@@ -119,10 +153,19 @@ class _RollingDiceUIState extends State<RollingDiceUI>
                   ),
                 ),
               ),
+              if (!_reduceMotion && _specialController.isAnimating)
+                CustomPaint(
+                  size: Size.square(widget.size * 1.72),
+                  painter: _DiceSpecialPainter(
+                    progress: specialProgress,
+                    pulse: specialPulse,
+                    color: widget.skin.border,
+                  ),
+                ),
               Transform.translate(
                 offset: Offset(motion.horizontalDrift * widget.size, jumpY),
                 child: Transform.scale(
-                  scale: motion.scale,
+                  scale: motion.scale * (1 + specialPulse * 0.08),
                   child: Transform(
                     alignment: Alignment.center,
                     transform: Matrix4.identity()
@@ -169,5 +212,49 @@ class _RollingDiceUIState extends State<RollingDiceUI>
         );
       },
     );
+  }
+}
+
+class _DiceSpecialPainter extends CustomPainter {
+  final double progress;
+  final double pulse;
+  final Color color;
+
+  const _DiceSpecialPainter({
+    required this.progress,
+    required this.pulse,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final opacity = (1 - progress).clamp(0.0, 1.0);
+    final radius = size.shortestSide * (0.25 + progress * 0.22);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = color.withOpacity(opacity * 0.72)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.shortestSide * 0.035,
+    );
+
+    for (int index = 0; index < 6; index++) {
+      final angle = index * pi / 3;
+      final distance = size.shortestSide * (0.28 + progress * 0.20);
+      canvas.drawCircle(
+        center + Offset(cos(angle), sin(angle)) * distance,
+        size.shortestSide * (0.025 + pulse * 0.012),
+        Paint()..color = color.withOpacity(opacity * 0.86),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DiceSpecialPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.pulse != pulse ||
+        oldDelegate.color != color;
   }
 }

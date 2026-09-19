@@ -6,8 +6,10 @@ import '../audio/app_audio_controller.dart';
 import '../audio/audio_catalog.dart';
 import '../components/end_game.dart';
 import '../components/lobby.dart';
+import '../components/presentation/victory_celebration.dart';
 import '../components/waiting_room.dart';
 import '../controllers/ludo_controller.dart';
+import '../game/ludo_presentation.dart';
 import '../models/ludo_models.dart';
 import 'game_screen.dart';
 import 'profile_screen.dart';
@@ -27,11 +29,11 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   String selectedBoard = 'classic';
   bool isTestMode = false;
   int cheatDiceValue = 0;
-  int lastChatTimestamp = 0;
   String lastSystemEventId = '';
   bool showProfile = false;
   bool _profileNameApplied = false;
   Timer? _playerNameSaveTimer;
+  final Set<String> _observedPlayingRooms = <String>{};
 
   @override
   void initState() {
@@ -72,6 +74,12 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
   void _gameListener() {
     _syncAudioPresentation();
 
+    if (_controller.game != null &&
+        _controller.gameId.isNotEmpty &&
+        _controller.shouldShowGameScreen) {
+      _observedPlayingRooms.add(_controller.gameId);
+    }
+
     if (!_profileNameApplied && _controller.profileLoaded) {
       _profileNameApplied = true;
 
@@ -83,7 +91,6 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     if (!mounted) return;
 
     _showSystemEventIfNeeded();
-    _showChatIfNeeded();
   }
 
   void _syncAudioPresentation() {
@@ -123,7 +130,8 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
 
     lastSystemEventId = event.id;
     final myId = _controller.user?.uid ?? '';
-    final isRecent = DateTime.now().millisecondsSinceEpoch - event.createdAtMs <
+    final isRecent =
+        DateTime.now().millisecondsSinceEpoch - event.createdAtMs <
         const Duration(seconds: 12).inMilliseconds;
 
     if (!isRecent || event.playerId == myId) return;
@@ -169,46 +177,6 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     );
   }
 
-  void _showChatIfNeeded() {
-    final chat = _controller.realtimeChat ?? _controller.game?.activeChat;
-    if (chat == null ||
-        chat.message.isEmpty ||
-        chat.timestamp == lastChatTimestamp) {
-      return;
-    }
-
-    lastChatTimestamp = chat.timestamp;
-    final senderName = _controller.getPlayerDisplayTitle(chat.sender);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final horizontalMargin =
-    screenWidth > 500 ? (screenWidth - 500) / 2 : 20.0;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '💬 $senderName: ${chat.message}',
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            fontSize: 14,
-          ),
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xff1f2937),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        margin: EdgeInsets.only(
-          bottom: MediaQuery.of(context).size.height * 0.75,
-          left: horizontalMargin,
-          right: horizontalMargin,
-        ),
-        duration: const Duration(milliseconds: 3500),
-      ),
-    );
-  }
-
   void _handlePlayerNameChanged(String value) {
     setState(() => playerName = value);
 
@@ -217,12 +185,9 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
     final normalized = value.trim();
     if (normalized.isEmpty || normalized.length > 15) return;
 
-    _playerNameSaveTimer = Timer(
-      const Duration(milliseconds: 700),
-          () {
-        unawaited(_controller.updateProfileName(normalized));
-      },
-    );
+    _playerNameSaveTimer = Timer(const Duration(milliseconds: 700), () {
+      unawaited(_controller.updateProfileName(normalized));
+    });
   }
 
   Future<void> _persistPlayerName() async {
@@ -265,12 +230,26 @@ class _LudoAppState extends State<LudoApp> with WidgetsBindingObserver {
           }
 
           if (_controller.shouldShowEndGame) {
-            return EndGame(
-              controller: _controller,
-              onQuit: () {
-                showProfile = false;
-                _controller.quitToMenu();
-              },
+            final shouldCelebrate = LudoPresentation.shouldCelebrateVictory(
+              matchWasObservedInProgress: _observedPlayingRooms.contains(
+                _controller.gameId,
+              ),
+              authoritativeMatchFinished: game?.status == 'finished',
+              presentationComplete: true,
+            );
+            return VictoryCelebration(
+              key: ValueKey('victory:${_controller.gameId}'),
+              enabled: shouldCelebrate,
+              winnerColor: _controller
+                  .colorStyleForPlayer(game?.winnerUid ?? '')
+                  .bright,
+              child: EndGame(
+                controller: _controller,
+                onQuit: () {
+                  showProfile = false;
+                  _controller.quitToMenu();
+                },
+              ),
             );
           }
 
