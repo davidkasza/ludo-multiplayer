@@ -12,6 +12,21 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.x'
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci --prefix functions
+      - name: Lint and test backend
+        run: npm --prefix functions run lint && npm --prefix functions test
+      - name: Test Firebase security and gameplay transactions
+        run: npm --prefix functions run test:emulator
       - run: flutter pub get
       - name: Analyze
         run: flutter analyze

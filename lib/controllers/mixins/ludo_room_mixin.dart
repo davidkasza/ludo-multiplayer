@@ -11,9 +11,11 @@ import '../../game/ludo_board_theme.dart';
 import '../../game/ludo_palette.dart';
 import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
+import '../../services/gameplay_functions.dart';
 
 mixin LudoRoomMixin on ChangeNotifier {
   FirebaseFirestore get db;
+  GameplayFunctions get gameplayFunctions;
 
   User? get user;
 
@@ -35,6 +37,7 @@ mixin LudoRoomMixin on ChangeNotifier {
   );
 
   bool get isHost;
+  bool get canUseSandbox;
 
   List<Map<String, dynamic>> createDefaultPieces(int initialPos);
   void syncVisualActiveMove(ActiveMove? remoteMove);
@@ -76,7 +79,6 @@ mixin LudoRoomMixin on ChangeNotifier {
   static const String _roomCodeChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   static const Duration waitingRoomLease = Duration(minutes: 12);
-  static const Duration activeGameLease = Duration(hours: 24);
   static const Duration _heartbeatInterval = Duration(minutes: 5);
 
   Timer? _roomHeartbeatTimer;
@@ -391,41 +393,21 @@ mixin LudoRoomMixin on ChangeNotifier {
     _legacyRecoveryTimer?.cancel();
     _legacyRecoveryKey = key;
     _legacyRecoveryTimer = Timer(const Duration(seconds: 3), () async {
-      final reference = db.collection('games').doc(roomId);
       try {
-        await db.runTransaction((transaction) async {
-          final snapshot = await transaction.get(reference);
-          final data = snapshot.data();
-          if (!snapshot.exists || data == null) return;
-          final latest = LudoGame.fromMap(data);
-          final latestKey =
-              latest.activeMove?.key ?? latest.activeDiceRoll?.key;
-          if (latest.status != 'playing' ||
-              latestKey != key ||
-              !LudoRules.needsLegacyActionRecovery(latest)) {
-            return;
-          }
-          final seconds = LudoGame.decisionDurationForPhase(
-            latest.hasRolled
-                ? LudoGame.waitingForMove
-                : LudoGame.waitingForRoll,
-          );
-          transaction.update(reference, {
-            'activeMove': null,
-            'activeDiceRoll': null,
-            'automationLease': null,
-            'turnPhase': latest.hasRolled
-                ? LudoGame.waitingForMove
-                : LudoGame.waitingForRoll,
-            'turnStartedAt': FieldValue.serverTimestamp(),
-            'turnDurationSeconds': seconds,
-            'turnDeadlineAt': Timestamp.fromDate(
-              estimatedServerNow.add(Duration(seconds: seconds)),
-            ),
-            'turnVersion': latest.turnVersion + 1,
-            'lastActivityAt': FieldValue.serverTimestamp(),
-          });
-        });
+        final latest = game;
+        final latestKey =
+            latest?.activeMove?.key ?? latest?.activeDiceRoll?.key;
+        if (latest == null ||
+            gameId != roomId ||
+            latestKey != key ||
+            !LudoRules.needsLegacyActionRecovery(latest)) {
+          return;
+        }
+        await gameplayFunctions.recoverGameState(
+          roomCode: roomId,
+          expectedTurnVersion: latest.turnVersion,
+          actionId: db.collection('_actionIds').doc().id,
+        );
       } catch (error) {
         debugPrint('Legacy action recovery failed: $error');
       }
@@ -433,40 +415,16 @@ mixin LudoRoomMixin on ChangeNotifier {
   }
 
   Future<void> _ensureTurnStateInitialized(String roomId) async {
-    final reference = db.collection('games').doc(roomId);
-
     try {
-      await db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(reference);
-        if (!snapshot.exists || snapshot.data() == null) return;
-
-        final latest = LudoGame.fromMap(snapshot.data()!);
-        if (latest.status != 'playing' ||
-            latest.effectiveTurnDeadline != null) {
-          return;
-        }
-
-        final waitingForMove = latest.hasRolled;
-        final seconds = LudoGame.decisionDurationForPhase(
-          waitingForMove ? LudoGame.waitingForMove : LudoGame.waitingForRoll,
-        );
-        transaction.update(reference, {
-          'turnPhase': waitingForMove
-              ? LudoGame.waitingForMove
-              : LudoGame.waitingForRoll,
-          'turnStartedAt': FieldValue.serverTimestamp(),
-          'turnDurationSeconds': seconds,
-          'turnDeadlineAt': Timestamp.fromDate(
-            estimatedServerNow.toUtc().add(Duration(seconds: seconds)),
-          ),
-          'turnVersion': latest.turnVersion <= 0 ? 1 : latest.turnVersion,
-          'aiControlledPlayers': latest.aiControlledPlayers,
-          'pendingReconnectPlayers': latest.pendingReconnectPlayers,
-          'forfeitedPlayers': latest.forfeitedPlayers,
-          'automationLease': null,
-          'lastActivityAt': FieldValue.serverTimestamp(),
-        });
-      });
+      final latest = game;
+      if (latest == null || gameId != roomId || latest.status != 'playing') {
+        return;
+      }
+      await gameplayFunctions.recoverGameState(
+        roomCode: roomId,
+        expectedTurnVersion: latest.turnVersion,
+        actionId: db.collection('_actionIds').doc().id,
+      );
     } catch (error) {
       if (kDebugMode) print('Turn-state migration error: $error');
     }
@@ -483,6 +441,12 @@ mixin LudoRoomMixin on ChangeNotifier {
   }) async {
     if (user == null || playerName.trim().isEmpty) {
       statusMessage = '❌ Please enter a nickname.';
+      notifyListeners();
+      return;
+    }
+    if (isTestMode && !canUseSandbox) {
+      statusMessage =
+          '❌ Sandbox mode is restricted to the verified owner account.';
       notifyListeners();
       return;
     }
@@ -545,7 +509,7 @@ mixin LudoRoomMixin on ChangeNotifier {
     final hasHumanOpponentSeat = layout
         .skip(1)
         .any((seat) => normalizedSeatTypes[seat] == LudoGame.humanSeat);
-    final effectivePublic = isPublic && hasHumanOpponentSeat;
+    final effectivePublic = isPublic && hasHumanOpponentSeat && !isTestMode;
 
     final gameData = <String, dynamic>{
       'players': players,
@@ -779,6 +743,9 @@ mixin LudoRoomMixin on ChangeNotifier {
       }
 
       final isTestModeActive = data['isTestModeActive'] == true;
+      if (isTestModeActive) {
+        throw Exception('Sandbox rooms are restricted to their owner');
+      }
       final initialPos = isTestModeActive ? 49 : -1;
 
       final playerNames = _dynamicMap(data['playerNames']);
@@ -951,6 +918,12 @@ mixin LudoRoomMixin on ChangeNotifier {
   }) async {
     if (gameId.isEmpty || game == null || !isHost) return false;
     if (game!.status != 'waiting') return false;
+    if (isTestMode && !canUseSandbox) {
+      statusMessage =
+          'Sandbox mode is restricted to the verified owner account.';
+      notifyListeners();
+      return false;
+    }
 
     final safeMaxPlayers = maxPlayers.clamp(2, 4).toInt();
     final safeBoardId = LudoBoardThemeResolver.normalizeId(selectedBoard);
@@ -990,6 +963,12 @@ mixin LudoRoomMixin on ChangeNotifier {
         final humanPlayers = currentPlayers
             .where((playerId) => !_isBotId(playerId))
             .toList();
+        if (isTestMode &&
+            (humanPlayers.length != 1 || humanPlayers.single != hostUid)) {
+          throw Exception(
+            'Sandbox matches can contain only you and computer players',
+          );
+        }
 
         final humanBySeat = <int, String>{};
         for (final playerId in humanPlayers) {
@@ -1080,7 +1059,7 @@ mixin LudoRoomMixin on ChangeNotifier {
         final hasHumanOpponentSeat = newLayout
             .skip(1)
             .any((seat) => normalizedSeatTypes[seat] == LudoGame.humanSeat);
-        final effectivePublic = isPublic && hasHumanOpponentSeat;
+        final effectivePublic = isPublic && hasHumanOpponentSeat && !isTestMode;
 
         transaction.update(ref, {
           'players': updatedPlayers,
@@ -1172,57 +1151,17 @@ mixin LudoRoomMixin on ChangeNotifier {
     statusMessage = '';
     notifyListeners();
 
-    final reference = db.collection('games').doc(gameId);
     try {
-      await db.runTransaction((transaction) async {
-        final snapshot = await transaction.get(reference);
-        final data = snapshot.data();
-        if (!snapshot.exists || data == null) {
-          throw StateError('Room no longer exists');
-        }
-        final latest = LudoGame.fromMap(data);
-        if (latest.hostUid != user?.uid || latest.status != 'waiting') {
-          throw StateError('Only the current host can start this room');
-        }
-        if (!latest.isReady || latest.players.isEmpty) {
-          throw StateError('The room is not ready');
-        }
-        transaction.update(reference, {
-          'status': 'playing',
-          'currentTurn': latest.players.first,
-          'diceValue': 0,
-          'hasRolled': false,
-          'winnerUid': '',
-          'finishOrder': const <String>[],
-          'startedAt': FieldValue.serverTimestamp(),
-          'finishedAt': null,
-          'activeMove': null,
-          'activeDiceRoll': null,
-          'turnPhase': LudoGame.waitingForRoll,
-          'turnStartedAt': FieldValue.serverTimestamp(),
-          'turnDurationSeconds': LudoGame.rollDecisionSeconds,
-          'turnDeadlineAt': Timestamp.fromDate(
-            estimatedServerNow.toUtc().add(
-              const Duration(seconds: LudoGame.rollDecisionSeconds),
-            ),
-          ),
-          'turnVersion': latest.turnVersion + 1,
-          'lastActionId': '',
-          'lastActionType': '',
-          'aiControlledPlayers': const <String>[],
-          'pendingReconnectPlayers': const <String>[],
-          'forfeitedPlayers': const <String>[],
-          'automationLease': null,
-          'systemEvent': null,
-          'matchmakingOpen': false,
-          'openSeats': 0,
-          'lastActivityAt': FieldValue.serverTimestamp(),
-          'expiresAt': _expiresAfter(activeGameLease),
-        });
-      });
+      final currentGame = game;
+      if (currentGame == null) return;
+      await gameplayFunctions.startGame(
+        roomCode: gameId,
+        expectedTurnVersion: currentGame.turnVersion,
+        actionId: db.collection('_actionIds').doc().id,
+      );
     } catch (error) {
       statusMessage =
-          'Could not start the match: ${error.toString().replaceFirst('Bad state: ', '')}';
+          'Could not start the match: ${error.toString().replaceFirst('Exception: ', '')}';
       notifyListeners();
     }
   }

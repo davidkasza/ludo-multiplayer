@@ -46,8 +46,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
 
   LudoController get controller => widget.controller;
 
-  bool get _isSyncing =>
-      _saveQueued || _saveInFlight || _awaitingRemoteAck;
+  bool get _isSyncing => _saveQueued || _saveInFlight || _awaitingRemoteAck;
 
   @override
   void initState() {
@@ -183,14 +182,9 @@ class _WaitingRoomState extends State<WaitingRoom> {
     _scheduleSettingsSave();
   }
 
-  void _scheduleSettingsSave({
-    Duration delay = _saveDebounce,
-  }) {
+  void _scheduleSettingsSave({Duration delay = _saveDebounce}) {
     _settingsSaveTimer?.cancel();
-    _settingsSaveTimer = Timer(
-      delay,
-          () => unawaited(_flushDraftSettings()),
-    );
+    _settingsSaveTimer = Timer(delay, () => unawaited(_flushDraftSettings()));
   }
 
   Future<void> _flushDraftSettings() async {
@@ -261,15 +255,17 @@ class _WaitingRoomState extends State<WaitingRoom> {
     final visibleSeatTypes = isHost
         ? _draftSeatTypes
         : _normalizeSeatTypes(
-      maxPlayers: game.maxPlayers,
-      source: game.seatTypes,
-    );
+            maxPlayers: game.maxPlayers,
+            source: game.seatTypes,
+          );
     final seatLayout = LudoGame.seatLayoutForMaxPlayers(visibleMaxPlayers);
-    final hasHumanOpponentSeat = seatLayout.skip(1).any(
+    final hasHumanOpponentSeat = seatLayout
+        .skip(1)
+        .any(
           (seat) =>
-      LudoGame.normalizeSeatType(visibleSeatTypes[seat]) ==
-          LudoGame.humanSeat,
-    );
+              LudoGame.normalizeSeatType(visibleSeatTypes[seat]) ==
+              LudoGame.humanSeat,
+        );
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -315,10 +311,8 @@ class _WaitingRoomState extends State<WaitingRoom> {
                             controller: controller,
                             game: game,
                             isHost: isHost,
-                            onColourTap: () => _showColourPicker(
-                              context: context,
-                              game: game,
-                            ),
+                            onColourTap: () =>
+                                _showColourPicker(context: context, game: game),
                             onSettingsTap: () => _showGameSettings(
                               context: context,
                               game: game,
@@ -328,9 +322,7 @@ class _WaitingRoomState extends State<WaitingRoom> {
                           ),
                           if (controller.statusMessage.isNotEmpty) ...[
                             const SizedBox(height: 10),
-                            _StatusMessage(
-                              message: controller.statusMessage,
-                            ),
+                            _StatusMessage(message: controller.statusMessage),
                           ],
                           const SizedBox(height: 8),
                         ],
@@ -361,13 +353,15 @@ class _WaitingRoomState extends State<WaitingRoom> {
     Map<int, String>? seatTypes,
     bool? isPublic,
   }) {
-    unawaited(controller.updateWaitingRoomSettings(
-      selectedBoard: selectedBoard ?? game.boardId,
-      isTestMode: isTestMode ?? game.isTestModeActive,
-      maxPlayers: maxPlayers ?? _draftMaxPlayers,
-      seatTypes: seatTypes ?? _draftSeatTypes,
-      isPublic: isPublic ?? game.isPublic,
-    ));
+    unawaited(
+      controller.updateWaitingRoomSettings(
+        selectedBoard: selectedBoard ?? game.boardId,
+        isTestMode: isTestMode ?? game.isTestModeActive,
+        maxPlayers: maxPlayers ?? _draftMaxPlayers,
+        seatTypes: seatTypes ?? _draftSeatTypes,
+        isPublic: isPublic ?? game.isPublic,
+      ),
+    );
   }
 
   Future<void> _showColourPicker({
@@ -375,10 +369,11 @@ class _WaitingRoomState extends State<WaitingRoom> {
     required LudoGame game,
   }) async {
     final myId = controller.user?.uid ?? '';
-    var selected = game.preferredColors[myId] ??
-        LudoPalette.defaultForSeat(controller.myPlayerIndex < 0
-            ? 0
-            : controller.myPlayerIndex);
+    var selected =
+        game.preferredColors[myId] ??
+        LudoPalette.defaultForSeat(
+          controller.myPlayerIndex < 0 ? 0 : controller.myPlayerIndex,
+        );
 
     await showModalBottomSheet<void>(
       context: context,
@@ -533,25 +528,27 @@ class _WaitingRoomState extends State<WaitingRoom> {
                       );
                     },
                   ),
-                  const SizedBox(height: 12),
-                  _ToggleSetting(
-                    title: '\u{1F6E0}\uFE0F Sandbox Mode',
-                    subtitle: isHost
-                        ? 'Pieces start near the end for quick testing.'
-                        : 'Only the host can change this setting.',
-                    value: sandbox,
-                    enabled: isHost,
-                    accentColor: AppColors.yellowSafeBorder,
-                    onChanged: (value) {
-                      setSheetState(() => sandbox = value);
-                      _updateSettings(
-                        game: game,
-                        selectedBoard: boardId,
-                        isTestMode: value,
-                        isPublic: isPublic,
-                      );
-                    },
-                  ),
+                  if (controller.canUseSandbox) ...[
+                    const SizedBox(height: 12),
+                    _ToggleSetting(
+                      title: '\u{1F6E0}\uFE0F Sandbox Mode',
+                      subtitle: isHost
+                          ? 'Owner-only mode. Use computer seats for testing.'
+                          : 'Only the host can change this setting.',
+                      value: sandbox,
+                      enabled: isHost,
+                      accentColor: AppColors.yellowSafeBorder,
+                      onChanged: (value) {
+                        setSheetState(() => sandbox = value);
+                        _updateSettings(
+                          game: game,
+                          selectedBoard: boardId,
+                          isTestMode: value,
+                          isPublic: isPublic,
+                        );
+                      },
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   SizedBox(
                     width: double.infinity,
@@ -617,10 +614,7 @@ class _CompactHeader extends StatelessWidget {
                 ),
                 Text(
                   'Configure seats, then start.',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                  ),
+                  style: TextStyle(color: Colors.white54, fontSize: 11),
                 ),
               ],
             ),
@@ -691,9 +685,7 @@ class _RoomCodeStrip extends StatelessWidget {
           IconButton(
             tooltip: 'Copy room code',
             onPressed: () async {
-              await Clipboard.setData(
-                ClipboardData(text: controller.gameId),
-              );
+              await Clipboard.setData(ClipboardData(text: controller.gameId));
 
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -741,8 +733,7 @@ class _PlayerSlotsPanel extends StatelessWidget {
     if (playerId == null) return null;
 
     final seatType = LudoGame.normalizeSeatType(seatTypes[physicalSeat]);
-    if (seatType == LudoGame.humanSeat &&
-        controller.isBotPlayer(playerId)) {
+    if (seatType == LudoGame.humanSeat && controller.isBotPlayer(playerId)) {
       return null;
     }
 
@@ -791,9 +782,11 @@ class _PlayerSlotsPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          for (int slotIndex = 0;
-          slotIndex < seatLayout.length;
-          slotIndex++) ...[
+          for (
+            int slotIndex = 0;
+            slotIndex < seatLayout.length;
+            slotIndex++
+          ) ...[
             _CompactPlayerSeat(
               controller: controller,
               game: game,
@@ -803,15 +796,14 @@ class _PlayerSlotsPanel extends StatelessWidget {
               seatType: slotIndex == 0
                   ? LudoGame.humanSeat
                   : LudoGame.normalizeSeatType(
-                seatTypes[seatLayout[slotIndex]],
-              ),
+                      seatTypes[seatLayout[slotIndex]],
+                    ),
               canConfigure: isHost,
               onSeatTypeChanged: (seatType) {
                 onSeatTypeChanged(seatLayout[slotIndex], seatType);
               },
             ),
-            if (slotIndex != seatLayout.length - 1)
-              const SizedBox(height: 7),
+            if (slotIndex != seatLayout.length - 1) const SizedBox(height: 7),
           ],
         ],
       ),
@@ -852,9 +844,7 @@ class _PlayerCountSelector extends StatelessWidget {
               height: 28,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: selected
-                    ? AppColors.blueBase
-                    : Colors.transparent,
+                color: selected ? AppColors.blueBase : Colors.transparent,
                 borderRadius: BorderRadius.circular(7),
               ),
               child: Text(
@@ -902,8 +892,7 @@ class _CompactPlayerSeat extends StatelessWidget {
     final isPlayerHost = occupied && resolvedPlayerId == game.hostUid;
     final isBot = occupied && controller.isBotPlayer(resolvedPlayerId);
     final occupiedByRealPlayer = occupied && !isBot;
-    final canChangeType =
-        canConfigure && !isHostSeat && !occupiedByRealPlayer;
+    final canChangeType = canConfigure && !isHostSeat && !occupiedByRealPlayer;
     final colour = occupied
         ? controller.colorStyleForPlayer(resolvedPlayerId)
         : controller.colorStyleForSeat(physicalSeat);
@@ -1166,10 +1155,11 @@ class _ColourAndSettingsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final myId = controller.user?.uid ?? '';
-    final colourId = game.preferredColors[myId] ??
-        LudoPalette.defaultForSeat(controller.myPlayerIndex < 0
-            ? 0
-            : controller.myPlayerIndex);
+    final colourId =
+        game.preferredColors[myId] ??
+        LudoPalette.defaultForSeat(
+          controller.myPlayerIndex < 0 ? 0 : controller.myPlayerIndex,
+        );
     final colour = LudoPalette.style(colourId);
     final boardLabel = LudoBoardThemeResolver.displayNameFor(game.boardId);
     final visibilityLabel = game.isPublic ? 'Public' : 'Private';
@@ -1208,10 +1198,7 @@ class _ColourAndSettingsRow extends StatelessWidget {
                       children: [
                         const Text(
                           'Your colour',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 10,
-                          ),
+                          style: TextStyle(color: Colors.white54, fontSize: 10),
                         ),
                         Text(
                           colour.label,
@@ -1341,24 +1328,19 @@ class _StartBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = isHost
         ? canStart
-        ? 'Start Game'
-        : 'Waiting for $openHumanSeats real player(s)...'
+              ? 'Start Game'
+              : 'Waiting for $openHumanSeats real player(s)...'
         : 'Waiting for host...';
 
     return Container(
       padding: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Colors.white.withOpacity(0.06)),
-        ),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.06))),
       ),
       child: ElevatedButton.icon(
         onPressed: canStart ? onStart : null,
         icon: Icon(canStart ? Icons.play_arrow_rounded : Icons.hourglass_top),
-        label: Text(
-          label,
-          style: const TextStyle(fontWeight: FontWeight.w900),
-        ),
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.successGreen,
           foregroundColor: Colors.white,
@@ -1378,10 +1360,7 @@ class _BottomSheetShell extends StatelessWidget {
   final String title;
   final Widget child;
 
-  const _BottomSheetShell({
-    required this.title,
-    required this.child,
-  });
+  const _BottomSheetShell({required this.title, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -1400,8 +1379,9 @@ class _BottomSheetShell extends StatelessWidget {
             ),
             decoration: BoxDecoration(
               color: AppColors.panelBackground.withOpacity(0.98),
-              borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
               border: Border.all(color: Colors.white.withOpacity(0.08)),
             ),
             child: SingleChildScrollView(
@@ -1491,15 +1471,15 @@ class _SettingDropdown<T> extends StatelessWidget {
               items: items.entries
                   .map(
                     (entry) => DropdownMenuItem<T>(
-                  value: entry.key,
-                  child: Text(entry.value),
-                ),
-              )
+                      value: entry.key,
+                      child: Text(entry.value),
+                    ),
+                  )
                   .toList(),
               onChanged: enabled
                   ? (newValue) {
-                if (newValue != null) onChanged(newValue);
-              }
+                      if (newValue != null) onChanged(newValue);
+                    }
                   : null,
             ),
           ),
@@ -1545,10 +1525,7 @@ class _ToggleSetting extends StatelessWidget {
         ),
         subtitle: Text(
           subtitle,
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.45),
-            fontSize: 11,
-          ),
+          style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 11),
         ),
         value: value,
         activeColor: accentColor,

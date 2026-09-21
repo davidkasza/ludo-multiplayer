@@ -1,0 +1,15 @@
+{
+  "validMoves": [
+    {"piece": {"id": 1, "pos": -1, "inHome": false}, "dice": 6, "valid": true},
+    {"piece": {"id": 1, "pos": -1, "inHome": false}, "dice": 5, "valid": false},
+    {"piece": {"id": 1, "pos": 3, "inHome": true}, "dice": 2, "valid": true},
+    {"piece": {"id": 1, "pos": 3, "inHome": true}, "dice": 3, "valid": false},
+    {"piece": {"id": 1, "pos": 5, "inHome": true}, "dice": 1, "valid": false}
+  ],
+  "destinations": [
+    {"piece": {"id": 1, "pos": -1, "inHome": false}, "dice": 6, "pos": 0, "inHome": false},
+    {"piece": {"id": 1, "pos": 10, "inHome": false}, "dice": 4, "pos": 14, "inHome": false},
+    {"piece": {"id": 1, "pos": 50, "inHome": false}, "dice": 4, "pos": 2, "inHome": true},
+    {"piece": {"id": 1, "pos": 3, "inHome": true}, "dice": 2, "pos": 5, "inHome": true}
+  ]
+}

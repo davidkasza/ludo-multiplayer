@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -14,6 +14,8 @@ import '../game/dice_skin.dart';
 import '../game/ludo_palette.dart';
 import '../game/ludo_presentation.dart';
 import '../models/ludo_models.dart';
+import '../security/sandbox_access.dart';
+import '../services/gameplay_functions.dart';
 import 'mixins/ludo_auth_mixin.dart';
 import 'mixins/ludo_google_auth_mixin.dart';
 import 'mixins/ludo_bot_mixin.dart';
@@ -41,12 +43,14 @@ class LudoController extends ChangeNotifier
         LudoBotMixin {
   final FirebaseAuth auth = FirebaseAuth.instance;
   final FirebaseFirestore db = FirebaseFirestore.instance;
+  late final GameplayFunctions gameplayFunctions = GameplayFunctions(
+    FirebaseFunctions.instanceFor(region: 'europe-west1'),
+  );
   final FirebaseDatabase realtimeDb = FirebaseDatabase.instanceFor(
     app: Firebase.app(),
     databaseURL:
         'https://ludo-app-569c2-default-rtdb.europe-west1.firebasedatabase.app',
   );
-  final Random random = Random.secure();
 
   User? user;
   String gameId = '';
@@ -426,6 +430,8 @@ class LudoController extends ChangeNotifier
     if (game == null || user == null) return false;
     return game!.hostUid == user!.uid;
   }
+
+  bool get canUseSandbox => SandboxAccess.isAllowedUser(user);
 
   bool isBotPlayer(String playerId) {
     return playerId.startsWith('bot_');

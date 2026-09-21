@@ -1,9 +1,38 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_game/game/ludo_rules.dart';
 import 'package:ludo_game/models/ludo_models.dart';
 
 void main() {
+  test('Dart rules match the shared backend movement fixtures', () {
+    final fixture =
+        jsonDecode(
+              File('test/fixtures/ludo_rules_cases.json').readAsStringSync(),
+            )
+            as Map<String, dynamic>;
+    for (final raw in fixture['validMoves'] as List<dynamic>) {
+      final entry = Map<String, dynamic>.from(raw as Map);
+      final piece = LudoPiece.fromMap(
+        Map<String, dynamic>.from(entry['piece'] as Map),
+      );
+      expect(
+        LudoRules.isValidMove(piece, entry['dice'] as int),
+        entry['valid'],
+      );
+    }
+    for (final raw in fixture['destinations'] as List<dynamic>) {
+      final entry = Map<String, dynamic>.from(raw as Map);
+      final piece = LudoPiece.fromMap(
+        Map<String, dynamic>.from(entry['piece'] as Map),
+      );
+      final destination = LudoRules.destination(piece, entry['dice'] as int);
+      expect(destination.pos, entry['pos']);
+      expect(destination.inHome, entry['inHome']);
+    }
+  });
+
   group('movement', () {
     test('a six leaves base and uses one visual step', () {
       const piece = LudoPiece(id: 1, pos: -1, inHome: false);

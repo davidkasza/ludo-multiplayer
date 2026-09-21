@@ -1,17 +1,17 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
-import '../../game/ludo_rules.dart';
 import '../../models/ludo_models.dart';
+import '../../services/gameplay_functions.dart';
 
 mixin LudoBotMixin on ChangeNotifier {
   FirebaseFirestore get db;
+  GameplayFunctions get gameplayFunctions;
   User? get user;
-  Random get random;
   String get gameId;
   LudoGame? get game;
   ActiveMove? get visualActiveMove;
@@ -20,15 +20,6 @@ mixin LudoBotMixin on ChangeNotifier {
 
   String get statusMessage;
   set statusMessage(String value);
-
-  int getGlobalPathIndexForIndex(int playerIndex, int relativePos);
-
-  Future<void> rollDiceForPlayer(
-    String playerId, {
-    int forcedValue = 0,
-    bool animateLocally = false,
-  });
-  Future<void> movePieceForPlayer(String playerId, int pieceId);
 
   Timer? _botTurnTimer;
   String? _scheduledAutomationStateKey;
@@ -82,20 +73,17 @@ mixin LudoBotMixin on ChangeNotifier {
       return;
     }
 
-    final Duration delay;
-    // Every connected participant can recover an automated/expired turn, but
-    // staggering them lets the first available client commit before later
-    // clients spend a transaction read on the same state. If that client is
-    // disconnected, the next participant still takes over shortly afterward.
     final recoveryStagger = Duration(milliseconds: controllerRank * 600);
+    final Duration delay;
     if (automated) {
       delay = const Duration(milliseconds: 650) + recoveryStagger;
     } else {
       final remaining = deadline!.difference(estimatedServerNow);
-      final deadlineDelay = remaining.isNegative
-          ? const Duration(milliseconds: 120)
-          : remaining + const Duration(milliseconds: 120);
-      delay = deadlineDelay + recoveryStagger;
+      delay =
+          (remaining.isNegative
+              ? const Duration(milliseconds: 120)
+              : remaining + const Duration(milliseconds: 120)) +
+          recoveryStagger;
     }
 
     _scheduledAutomationStateKey = stateKey;
@@ -132,27 +120,26 @@ mixin LudoBotMixin on ChangeNotifier {
       return;
     }
 
-    final playerId = currentGame.currentTurn;
     final deadline = currentGame.effectiveTurnDeadline;
-    if (!currentGame.isAiControlled(playerId) &&
+    if (!currentGame.isAiControlled(currentGame.currentTurn) &&
         (deadline == null || deadline.isAfter(estimatedServerNow))) {
       return;
     }
 
     _automationBusy = true;
     try {
-      if (currentGame.turnPhase == LudoGame.waitingForRoll &&
-          !currentGame.hasRolled) {
-        await rollDiceForPlayer(playerId);
-      } else if (currentGame.turnPhase == LudoGame.waitingForMove &&
-          currentGame.hasRolled) {
-        final piece = _chooseBotPiece(
-          playerId: playerId,
-          diceValue: currentGame.diceValue,
-          pieces: currentGame.pieces[playerId] ?? const <LudoPiece>[],
-          currentGame: currentGame,
+      await gameplayFunctions.processTurnTimeout(
+        roomCode: gameId,
+        expectedTurnVersion: currentGame.turnVersion,
+        actionId: db.collection('_actionIds').doc().id,
+      );
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code != 'aborted' && error.code != 'failed-precondition') {
+        debugPrint(
+          'Automated turn callable failed: ${error.code}: ${error.message}',
         );
-        if (piece != null) await movePieceForPlayer(playerId, piece.id);
+        statusMessage = 'Automated turn failed. Retrying...';
+        notifyListeners();
       }
     } catch (error, stackTrace) {
       debugPrint('Automated turn failed: $error\n$stackTrace');
@@ -167,192 +154,44 @@ mixin LudoBotMixin on ChangeNotifier {
 
   Future<bool> requestTakeBackControl() async {
     final currentUser = user;
-    if (currentUser == null || gameId.isEmpty) return false;
-    final reference = db.collection('games').doc(gameId);
-    bool deferred = false;
-
-    final success = await db.runTransaction<bool>((transaction) async {
-      final snapshot = await transaction.get(reference);
-      final data = snapshot.data();
-      if (!snapshot.exists || data == null) return false;
-      final latest = LudoGame.fromMap(data);
-      final playerId = currentUser.uid;
-      if (!latest.players.contains(playerId) ||
-          latest.status != 'playing' ||
-          latest.forfeitedPlayers.contains(playerId)) {
-        return false;
-      }
-      if (!latest.aiControlledPlayers.contains(playerId)) return true;
-
-      // New action descriptors have already been applied and are only visual.
-      // Only legacy two-phase actions require deferred hand-back.
-      final legacyActionInProgress =
-          latest.currentTurn == playerId &&
-          ((latest.activeMove != null && !latest.activeMove!.stateApplied) ||
-              (latest.activeDiceRoll != null &&
-                  !latest.activeDiceRoll!.stateApplied));
-      final aiControlled = List<String>.from(latest.aiControlledPlayers);
-      final pending = List<String>.from(latest.pendingReconnectPlayers);
-      final nextVersion = latest.turnVersion + 1;
-      if (legacyActionInProgress) {
-        deferred = true;
-        if (!pending.contains(playerId)) pending.add(playerId);
-        transaction.update(reference, {
-          'pendingReconnectPlayers': pending,
-          'lastActivityAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        aiControlled.remove(playerId);
-        pending.remove(playerId);
-        final seconds = LudoGame.decisionDurationForPhase(latest.turnPhase);
-        transaction.update(reference, {
-          'aiControlledPlayers': aiControlled,
-          'pendingReconnectPlayers': pending,
-          'automationLease': null,
-          'systemEvent': GameSystemEvent(
-            id: 'reconnected_${playerId}_$nextVersion',
-            type: GameSystemEvent.playerReconnected,
-            playerId: playerId,
-            createdAtMs: estimatedServerNow.millisecondsSinceEpoch,
-          ).toMap(),
-          if (latest.currentTurn == playerId) ...{
-            'turnVersion': nextVersion,
-            'turnStartedAt': FieldValue.serverTimestamp(),
-            'turnDurationSeconds': seconds,
-            'turnDeadlineAt': Timestamp.fromDate(
-              estimatedServerNow.add(Duration(seconds: seconds)),
-            ),
-          },
-          'lastActivityAt': FieldValue.serverTimestamp(),
-        });
-      }
-      return true;
-    });
-
-    if (success) {
+    final currentGame = game;
+    if (currentUser == null || currentGame == null || gameId.isEmpty) {
+      return false;
+    }
+    try {
+      final result = await gameplayFunctions.requestTakeBackControl(
+        roomCode: gameId,
+        expectedTurnVersion: currentGame.turnVersion,
+        actionId: db.collection('_actionIds').doc().id,
+      );
+      final deferred = result['deferred'] == true;
       statusMessage = deferred
           ? 'Control will return after the interrupted legacy action recovers.'
           : 'You are back in control.';
       notifyListeners();
+      return true;
+    } catch (error) {
+      debugPrint('Take-back control failed: $error');
+      return false;
     }
-    return success;
   }
 
   Future<bool> markMyselfForfeit() async {
     final currentUser = user;
-    if (currentUser == null || gameId.isEmpty) return false;
-    final reference = db.collection('games').doc(gameId);
-
-    return db.runTransaction<bool>((transaction) async {
-      final snapshot = await transaction.get(reference);
-      final data = snapshot.data();
-      if (!snapshot.exists || data == null) return false;
-      final latest = LudoGame.fromMap(data);
-      final playerId = currentUser.uid;
-      if (!latest.players.contains(playerId) ||
-          latest.status != 'playing' ||
-          latest.finishOrder.contains(playerId)) {
-        return false;
-      }
-
-      final ai = List<String>.from(latest.aiControlledPlayers);
-      final pending = List<String>.from(latest.pendingReconnectPlayers)
-        ..remove(playerId);
-      final forfeited = List<String>.from(latest.forfeitedPlayers);
-      if (!ai.contains(playerId)) ai.add(playerId);
-      if (!forfeited.contains(playerId)) forfeited.add(playerId);
-      final nextVersion = latest.turnVersion + 1;
-      transaction.update(reference, {
-        'aiControlledPlayers': ai,
-        'pendingReconnectPlayers': pending,
-        'forfeitedPlayers': forfeited,
-        'systemEvent': GameSystemEvent(
-          id: 'forfeit_${playerId}_$nextVersion',
-          type: GameSystemEvent.playerForfeited,
-          playerId: playerId,
-          createdAtMs: estimatedServerNow.millisecondsSinceEpoch,
-        ).toMap(),
-        if (latest.currentTurn == playerId) ...{
-          'turnVersion': nextVersion,
-          'turnStartedAt': FieldValue.serverTimestamp(),
-          'turnDurationSeconds': 0,
-          'turnDeadlineAt': Timestamp.fromDate(estimatedServerNow),
-          'automationLease': null,
-        },
-        'lastActivityAt': FieldValue.serverTimestamp(),
-      });
+    final currentGame = game;
+    if (currentUser == null || currentGame == null || gameId.isEmpty) {
+      return false;
+    }
+    try {
+      await gameplayFunctions.forfeitMatch(
+        roomCode: gameId,
+        expectedTurnVersion: currentGame.turnVersion,
+        actionId: db.collection('_actionIds').doc().id,
+      );
       return true;
-    });
-  }
-
-  LudoPiece? _chooseBotPiece({
-    required String playerId,
-    required int diceValue,
-    required List<LudoPiece> pieces,
-    required LudoGame currentGame,
-  }) {
-    final valid = pieces
-        .where((piece) => LudoRules.isValidMove(piece, diceValue))
-        .toList();
-    if (valid.isEmpty) return null;
-    valid.sort((a, b) {
-      final bScore = _scoreMove(playerId, b, diceValue, currentGame);
-      final aScore = _scoreMove(playerId, a, diceValue, currentGame);
-      return bScore.compareTo(aScore);
-    });
-    return valid.first;
-  }
-
-  int _scoreMove(
-    String playerId,
-    LudoPiece piece,
-    int diceValue,
-    LudoGame currentGame,
-  ) {
-    final destination = LudoRules.destination(piece, diceValue);
-    var score = 0;
-    if (destination.inHome && destination.pos == LudoRules.goalPosition) {
-      score += 10000;
-    } else if (destination.inHome) {
-      score += 3000 + destination.pos * 100;
+    } catch (error) {
+      debugPrint('Forfeit failed: $error');
+      return false;
     }
-    if (piece.pos == LudoRules.basePosition) score += 1800;
-    if (_wouldCapture(playerId, destination, currentGame)) score += 5000;
-    if (!destination.inHome) {
-      final seat =
-          currentGame.playerSeats[playerId] ??
-          currentGame.players.indexOf(playerId).clamp(0, 3).toInt();
-      final global = getGlobalPathIndexForIndex(seat, destination.pos);
-      if (LudoRules.safeGlobalPositions.contains(global)) score += 450;
-      score += destination.pos * 12;
-    }
-    return score + random.nextInt(25);
-  }
-
-  bool _wouldCapture(
-    String playerId,
-    ActiveMoveStep destination,
-    LudoGame currentGame,
-  ) {
-    if (destination.inHome) return false;
-    final seat =
-        currentGame.playerSeats[playerId] ??
-        currentGame.players.indexOf(playerId).clamp(0, 3).toInt();
-    final global = getGlobalPathIndexForIndex(seat, destination.pos);
-    if (LudoRules.safeGlobalPositions.contains(global)) return false;
-    for (final opponentId in currentGame.players) {
-      if (opponentId == playerId) continue;
-      final opponentSeat =
-          currentGame.playerSeats[opponentId] ??
-          currentGame.players.indexOf(opponentId).clamp(0, 3).toInt();
-      for (final opponent
-          in currentGame.pieces[opponentId] ?? const <LudoPiece>[]) {
-        if (opponent.pos == LudoRules.basePosition || opponent.inHome) continue;
-        if (getGlobalPathIndexForIndex(opponentSeat, opponent.pos) == global) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 }

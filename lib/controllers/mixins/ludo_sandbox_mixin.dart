@@ -3,16 +3,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../models/ludo_models.dart';
+import '../../services/gameplay_functions.dart';
 
 mixin LudoSandboxMixin on ChangeNotifier {
   FirebaseFirestore get db;
+  GameplayFunctions get gameplayFunctions;
   User? get user;
   String get gameId;
-  DateTime get estimatedServerNow;
+  LudoGame? get game;
+  bool get canUseSandbox;
 
   Future<void> teleportPiece(int pieceId, String value) async {
     final currentUser = user;
-    if (gameId.isEmpty || currentUser == null) return;
+    final currentGame = game;
+    if (gameId.isEmpty ||
+        currentUser == null ||
+        currentGame == null ||
+        !canUseSandbox ||
+        !currentGame.isTestModeActive) {
+      return;
+    }
 
     var newPosition = -1;
     var inHome = false;
@@ -32,31 +42,17 @@ mixin LudoSandboxMixin on ChangeNotifier {
       return;
     }
 
-    final reference = db.collection('games').doc(gameId);
-    await db.runTransaction((transaction) async {
-      final snapshot = await transaction.get(reference);
-      final data = snapshot.data();
-      if (!snapshot.exists || data == null) return;
-      final latest = LudoGame.fromMap(data);
-      if (!latest.isTestModeActive ||
-          !latest.players.contains(currentUser.uid)) {
-        return;
-      }
-      final pieces = latest.pieces[currentUser.uid] ?? const <LudoPiece>[];
-      if (!pieces.any((piece) => piece.id == pieceId)) return;
-      transaction.update(reference, {
-        'pieces.${currentUser.uid}': pieces
-            .map(
-              (piece) => piece.id == pieceId
-                  ? piece.copyWith(pos: newPosition, inHome: inHome).toMap()
-                  : piece.toMap(),
-            )
-            .toList(),
-        'lastActivityAt': FieldValue.serverTimestamp(),
-        'expiresAt': Timestamp.fromDate(
-          estimatedServerNow.toUtc().add(const Duration(hours: 24)),
-        ),
-      });
-    });
+    try {
+      await gameplayFunctions.sandboxTeleportPiece(
+        roomCode: gameId,
+        pieceId: pieceId,
+        pos: newPosition,
+        inHome: inHome,
+        expectedTurnVersion: currentGame.turnVersion,
+        actionId: db.collection('_actionIds').doc().id,
+      );
+    } catch (error) {
+      debugPrint('Sandbox teleport failed: $error');
+    }
   }
 }

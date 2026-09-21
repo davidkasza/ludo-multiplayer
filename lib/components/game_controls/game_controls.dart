@@ -84,7 +84,7 @@ class _GameControlsState extends State<GameControls>
               pulseAnimation: _pulseController,
               cheatDiceValue: widget.cheatDiceValue,
             ),
-            if (c.game?.isTestModeActive == true) ...[
+            if (c.game?.isTestModeActive == true && c.canUseSandbox) ...[
               const SizedBox(height: 6),
               SandboxToolkit(
                 controller: c,

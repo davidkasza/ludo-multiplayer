@@ -10,6 +10,8 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  exclude:
+    - functions/**
   errors:
     # Existing Flutter API migration debt. Keep errors/warnings fatal without
     # forcing an unrelated 150-line visual refactor into this reliability fix.

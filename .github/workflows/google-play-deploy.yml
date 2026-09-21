@@ -25,6 +25,22 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci --prefix functions
+
+      - name: Lint and test backend
+        run: npm --prefix functions run lint && npm --prefix functions test
+
+      - name: Test Firebase security and gameplay transactions
+        run: npm --prefix functions run test:emulator
+
       - name: Decode Keystore and create key.properties
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release.jks
