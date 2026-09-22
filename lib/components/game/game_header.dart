@@ -6,32 +6,56 @@ import '../../theme/app_colors.dart';
 class GameHeader extends StatelessWidget {
   final LudoController controller;
 
-  const GameHeader({
-    super.key,
-    required this.controller,
-  });
+  const GameHeader({super.key, required this.controller});
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          controller.game?.isTestModeActive == true
-              ? '🎲 Sandbox Mode'
-              : '🎲 Ludo Battle',
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
+        Expanded(
+          child: Text(
+            controller.game?.isTestModeActive == true
+                ? '🎲 Sandbox Mode'
+                : '🎲 Ludo Battle',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
           ),
         ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppColors.yellowBase.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: AppColors.yellowBright.withOpacity(0.38)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.monetization_on,
+                size: 15,
+                color: AppColors.yellowBright,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '${controller.profileCoins}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 4),
         TextButton(
           onPressed: () => _showLeaveDialog(context),
-          child: const Text(
-            'Quit',
-            style: TextStyle(color: Colors.red),
-          ),
+          child: const Text('Quit', style: TextStyle(color: Colors.red)),
         ),
       ],
     );
@@ -60,8 +84,8 @@ class GameHeader extends StatelessWidget {
               child: const Text('Cancel'),
             ),
             if (controller.game?.finishOrder.contains(
-              controller.user?.uid ?? '',
-            ) !=
+                  controller.user?.uid ?? '',
+                ) !=
                 true)
               TextButton(
                 onPressed: () async {

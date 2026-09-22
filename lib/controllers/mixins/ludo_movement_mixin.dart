@@ -19,6 +19,9 @@ mixin LudoMovementMixin on ChangeNotifier {
 
   bool get isMyTurn;
 
+  bool _movementRequestPending = false;
+  bool get movementRequestPending => _movementRequestPending;
+
   Future<void> movePiece(int pieceId) async {
     if (user == null || !isMyTurn) return;
     await movePieceForPlayer(user!.uid, pieceId);
@@ -32,6 +35,9 @@ mixin LudoMovementMixin on ChangeNotifier {
       return;
     }
 
+    if (_movementRequestPending) return;
+    _movementRequestPending = true;
+    notifyListeners();
     final actionId = db.collection('_actionIds').doc().id;
     try {
       if (playerId == currentUser.uid &&
@@ -61,6 +67,9 @@ mixin LudoMovementMixin on ChangeNotifier {
     } catch (error, stackTrace) {
       debugPrint('Move action failed: $error\n$stackTrace');
       statusMessage = '❌ Could not move the piece.';
+      notifyListeners();
+    } finally {
+      _movementRequestPending = false;
       notifyListeners();
     }
   }

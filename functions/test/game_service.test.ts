@@ -1,15 +1,19 @@
 import {deleteApp, initializeApp} from "firebase-admin/app";
-import {getFirestore, QueryDocumentSnapshot} from "firebase-admin/firestore";
+import {getFirestore, QueryDocumentSnapshot, Timestamp} from "firebase-admin/firestore";
 import {expect} from "chai";
 import {HttpsError} from "firebase-functions/v2/https";
 
 import {
   createInitialGameForTests,
   movePieceIntent,
+  passNoValidMoveIntent,
+  processTurnTimeoutIntent,
   rollDiceIntent,
   sandboxTeleportIntent,
   startGameIntent,
+  useRerollIntent,
 } from "../src/game_service";
+import {DEFAULT_REROLL_PRICING, rerollCostAfterUses} from "../src/reroll";
 import {
   claimMatchRewardIntent,
   completeAccountTransferIntent,
@@ -21,12 +25,57 @@ describe("authoritative gameplay service", () => {
   const db = getFirestore(app);
 
   beforeEach(async () => {
-    const snapshot = await db.collection("games").get();
-    await Promise.all(snapshot.docs.map((document: QueryDocumentSnapshot) => document.ref.delete()));
+    for (const collection of ["games", "users", "matchResults"]) {
+      const snapshot = await db.collection(collection).get();
+      await Promise.all(snapshot.docs.map((document: QueryDocumentSnapshot) => document.ref.delete()));
+    }
     await db.collection("games").doc("ABCDE").set(createInitialGameForTests());
   });
 
   after(async () => deleteApp(app));
+
+  async function seedRerollState({
+    coins = 200,
+    uses = 0,
+    noValidMove = false,
+    aiControlled = false,
+  }: {
+    coins?: number;
+    uses?: number;
+    noValidMove?: boolean;
+    aiControlled?: boolean;
+  } = {}): Promise<void> {
+    await db.collection("users").doc("player-a").set({coins});
+    await db.collection("games").doc("ABCDE").set(createInitialGameForTests({
+      diceValue: 1,
+      hasRolled: true,
+      turnPhase: noValidMove ? "waitingForRerollDecision" : "waitingForMove",
+      activeDiceRoll: {
+        actionId: "initial_roll_1",
+        turnVersion: 1,
+        playerId: "player-a",
+        startedAt: Date.now(),
+        durationMs: 800,
+        result: 1,
+        stateApplied: true,
+      },
+      ...(noValidMove ? {} : {
+        pieces: {
+          "player-a": [
+            {id: 1, pos: 0, inHome: false},
+            {id: 2, pos: -1, inHome: false},
+            {id: 3, pos: -1, inHome: false},
+            {id: 4, pos: -1, inHome: false},
+          ],
+          "player-b": [1, 2, 3, 4].map((id) => ({id, pos: -1, inHome: false})),
+        },
+      }),
+      rerollsUsed: uses > 0 ? {"player-a": uses} : {},
+      aiControlledPlayers: aiControlled ? ["player-a"] : [],
+      turnStartedAt: Timestamp.now(),
+      turnDurationSeconds: 30,
+    }));
+  }
 
   it("rejects a non-participant even when intent fields are otherwise valid", async () => {
     try {
@@ -69,6 +118,225 @@ describe("authoritative gameplay service", () => {
     expect(retry.duplicate).to.equal(true);
     const snapshot = await db.collection("games").doc("ABCDE").get();
     expect(snapshot.get("turnVersion")).to.equal(2);
+  });
+
+  it("charges 50, 60, and 70 coins, then rejects a fourth Reroll", async () => {
+    await seedRerollState();
+    let expectedVersion = 1;
+    let expectedActionId = "initial_roll_1";
+    const expectedBalances = [150, 90, 20];
+    for (let index = 0; index < 3; index++) {
+      const actionId = `reroll_action_${index + 1}`;
+      const result = await useRerollIntent(db, {uid: "player-a"}, {
+        roomCode: "ABCDE",
+        expectedTurnVersion: expectedVersion,
+        expectedActionId,
+        actionId,
+      }, () => index + 2);
+      expect(result.chargedCoins).to.equal(rerollCostAfterUses(DEFAULT_REROLL_PRICING, index));
+      expect(result.coinBalance).to.equal(expectedBalances[index]);
+      expect(result.rerollsUsed).to.equal(index + 1);
+      expectedVersion++;
+      expectedActionId = actionId;
+    }
+
+    try {
+      await useRerollIntent(db, {uid: "player-a"}, {
+        roomCode: "ABCDE",
+        expectedTurnVersion: expectedVersion,
+        expectedActionId,
+        actionId: "reroll_action_4",
+      }, () => 6);
+      expect.fail("Expected the fourth Reroll to be rejected");
+    } catch (error) {
+      expect((error as HttpsError).code).to.equal("failed-precondition");
+    }
+    expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(20);
+  });
+
+  it("charges the same server-authored price published in the match snapshot", async () => {
+    await seedRerollState({coins: 100});
+    await db.collection("games").doc("ABCDE").update({
+      rerollConfig: {costs: [41, 57], maxUsesPerMatch: 2},
+    });
+    const result = await useRerollIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      expectedActionId: "initial_roll_1",
+      actionId: "configured_reroll_1",
+    }, () => 2);
+    expect(result.chargedCoins).to.equal(41);
+    expect(result.coinBalance).to.equal(59);
+    expect(result.nextRerollCost).to.equal(57);
+    const game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.rerollConfig).to.deep.equal({costs: [41, 57], maxUsesPerMatch: 2});
+  });
+
+  it("deduplicates a retried Reroll without charging twice", async () => {
+    await seedRerollState({coins: 100});
+    const intent = {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      expectedActionId: "initial_roll_1",
+      actionId: "reroll_retry_1",
+    };
+    const first = await useRerollIntent(db, {uid: "player-a"}, intent, () => 2);
+    const retry = await useRerollIntent(db, {uid: "player-a"}, intent, () => 6);
+    expect(first.coinBalance).to.equal(50);
+    expect(retry.duplicate).to.equal(true);
+    expect(retry.coinBalance).to.equal(50);
+    expect((await db.collection("games").doc("ABCDE").get()).get("rerollsUsed.player-a")).to.equal(1);
+  });
+
+  it("rejects insufficient coins without changing room or profile state", async () => {
+    await seedRerollState({coins: 49});
+    try {
+      await useRerollIntent(db, {uid: "player-a"}, {
+        roomCode: "ABCDE",
+        expectedTurnVersion: 1,
+        expectedActionId: "initial_roll_1",
+        actionId: "poor_reroll_1",
+      }, () => 2);
+      expect.fail("Expected insufficient coins");
+    } catch (error) {
+      expect((error as HttpsError).code).to.equal("resource-exhausted");
+    }
+    expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(49);
+    expect((await db.collection("games").doc("ABCDE").get()).get("turnVersion")).to.equal(1);
+  });
+
+  it("binds Reroll to its owner and exact authoritative roll", async () => {
+    await seedRerollState();
+    for (const attempt of [
+      {caller: "player-b", version: 1, roll: "initial_roll_1", action: "other_user_1"},
+      {caller: "player-a", version: 1, roll: "stale_roll_1", action: "stale_roll_try_1"},
+      {caller: "player-a", version: 0, roll: "initial_roll_1", action: "stale_version_1"},
+    ]) {
+      try {
+        await useRerollIntent(db, {uid: attempt.caller}, {
+          roomCode: "ABCDE",
+          expectedTurnVersion: attempt.version,
+          expectedActionId: attempt.roll,
+          actionId: attempt.action,
+        }, () => 2);
+        expect.fail("Expected stale or foreign Reroll to fail");
+      } catch (error) {
+        expect(["failed-precondition", "aborted"]).to.include((error as HttpsError).code);
+      }
+    }
+    expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(200);
+  });
+
+  it("does not let an AI-controlled player purchase Reroll", async () => {
+    await seedRerollState({aiControlled: true});
+    try {
+      await useRerollIntent(db, {uid: "player-a"}, {
+        roomCode: "ABCDE",
+        expectedTurnVersion: 1,
+        expectedActionId: "initial_roll_1",
+        actionId: "ai_reroll_try_1",
+      }, () => 2);
+      expect.fail("Expected AI Reroll to fail");
+    } catch (error) {
+      expect((error as HttpsError).code).to.equal("failed-precondition");
+    }
+  });
+
+  it("ignores forged client outcomes and uses the server dice generator", async () => {
+    await seedRerollState();
+    const result = await useRerollIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      expectedActionId: "initial_roll_1",
+      actionId: "server_rng_1",
+      diceValue: 6,
+      price: 1,
+      finalCoinBalance: 999999,
+    }, () => 2);
+    expect(result.diceValue).to.equal(2);
+    expect(result.chargedCoins).to.equal(50);
+    expect(result.coinBalance).to.equal(150);
+  });
+
+  it("supports Reroll with legal moves and with no legal moves", async () => {
+    await seedRerollState();
+    const originalDeadlineStart = (await db.collection("games").doc("ABCDE").get())
+      .get("turnStartedAt").toMillis();
+    await useRerollIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      expectedActionId: "initial_roll_1",
+      actionId: "legal_reroll_1",
+    }, () => 2);
+    let game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.turnPhase).to.equal("waitingForMove");
+    expect(game.hasRolled).to.equal(true);
+    expect(game.turnStartedAt.toMillis()).to.equal(originalDeadlineStart);
+
+    await seedRerollState({noValidMove: true});
+    await useRerollIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      expectedActionId: "initial_roll_1",
+      actionId: "no_move_reroll_1",
+    }, () => 1);
+    game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.turnPhase).to.equal("waitingForRerollDecision");
+    expect(game.hasRolled).to.equal(true);
+  });
+
+  it("allows a no-move Continue without spending coins", async () => {
+    await seedRerollState({noValidMove: true});
+    await passNoValidMoveIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      expectedActionId: "initial_roll_1",
+      actionId: "pass_no_move_1",
+    });
+    const game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.currentTurn).to.equal("player-b");
+    expect(game.hasRolled).to.equal(false);
+    expect(game.rerollsUsed).to.deep.equal({});
+    expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(200);
+  });
+
+  it("times out a no-move decision without spending coins or a Reroll", async () => {
+    await seedRerollState({noValidMove: true});
+    await db.collection("games").doc("ABCDE").update({
+      turnStartedAt: Timestamp.fromMillis(Date.now() - 31000),
+    });
+    await processTurnTimeoutIntent(db, {uid: "player-b"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      actionId: "timeout_pass_1",
+    });
+    const game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.rerollsUsed).to.deep.equal({});
+    expect(game.aiControlledPlayers).to.include("player-a");
+    expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(200);
+  });
+
+  it("offers a no-move decision only when the human can afford Reroll", async () => {
+    await db.collection("users").doc("player-a").set({coins: 50});
+    await rollDiceIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      actionId: "no_move_roll_1",
+    }, () => 1);
+    let game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.turnPhase).to.equal("waitingForRerollDecision");
+    expect(game.currentTurn).to.equal("player-a");
+
+    await db.collection("games").doc("ABCDE").set(createInitialGameForTests());
+    await db.collection("users").doc("player-a").set({coins: 49});
+    await rollDiceIntent(db, {uid: "player-a"}, {
+      roomCode: "ABCDE",
+      expectedTurnVersion: 1,
+      actionId: "ordinary_no_move_1",
+    }, () => 1);
+    game = (await db.collection("games").doc("ABCDE").get()).data()!;
+    expect(game.turnPhase).to.equal("waitingForRoll");
+    expect(game.currentTurn).to.equal("player-b");
   });
 
   it("validates movement, applies capture, and awards the extra turn", async () => {
@@ -189,6 +457,7 @@ describe("authoritative gameplay service", () => {
       hostUid: "player-a",
       maxPlayers: 2,
       turnVersion: 0,
+      rerollsUsed: {"player-a": 2},
       playerNames: {"player-a": "A", "player-b": "B"},
       playerSeats: {"player-a": 0, "player-b": 2},
     }));
@@ -202,6 +471,11 @@ describe("authoritative gameplay service", () => {
     expect(game.players).to.deep.equal(["player-a", "player-b"]);
     expect(game.currentTurn).to.equal("player-a");
     expect(game.turnDurationSeconds).to.equal(30);
+    expect(game.rerollsUsed).to.deep.equal({});
+    expect(game.rerollConfig).to.deep.equal({
+      costs: [50, 60, 70],
+      maxUsesPerMatch: 3,
+    });
     expect(game.turnDeadlineAt.toMillis()).to.be.greaterThan(game.turnStartedAt.toMillis());
   });
 

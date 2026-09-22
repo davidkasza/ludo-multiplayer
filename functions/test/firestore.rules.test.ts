@@ -47,6 +47,7 @@ function baseGame(hostUid: string, sandbox = false): Record<string, unknown> {
     turnStartedAt: null,
     turnDurationSeconds: 0,
     turnVersion: 0,
+    rerollsUsed: {},
     lastActionId: "",
     lastActionType: "",
     aiControlledPlayers: [],
@@ -106,8 +107,30 @@ describe("Firestore authority rules", () => {
     ]}));
     await assertFails(updateDoc(doc(player, "games/ABCDE"), {"pieces.player-b": []}));
     await assertFails(updateDoc(doc(player, "games/ABCDE"), {status: "finished", winnerUid: "player-a"}));
+    await assertFails(updateDoc(doc(player, "games/ABCDE"), {rerollsUsed: {"player-a": 1}}));
     await assertFails(updateDoc(doc(player, "users/player-a"), {xp: 999999, coins: 999999}));
     await assertFails(setDoc(doc(player, "users/player-a/rewardClaims/forged"), {xp: 999999}));
+  });
+
+  it("rejects a forged Reroll usage counter during room creation", async () => {
+    const player = env.authenticatedContext("player-a").firestore();
+    const forged = baseGame("player-a");
+    forged.rerollsUsed = {"player-a": 2};
+    await assertFails(setDoc(doc(player, "games/REROL"), forged));
+  });
+
+  it("rejects client-authored Reroll pricing during room creation", async () => {
+    const player = env.authenticatedContext("player-a").firestore();
+    const forged = baseGame("player-a");
+    forged.rerollConfig = {costs: [1], maxUsesPerMatch: 1};
+    await assertFails(setDoc(doc(player, "games/PRICE"), forged));
+  });
+
+  it("keeps legacy room creation without a Reroll map compatible", async () => {
+    const player = env.authenticatedContext("player-a").firestore();
+    const legacy = baseGame("player-a");
+    delete legacy.rerollsUsed;
+    await assertSucceeds(setDoc(doc(player, "games/LEGAC"), legacy));
   });
 
   it("rejects gameplay writes from a non-participant", async () => {

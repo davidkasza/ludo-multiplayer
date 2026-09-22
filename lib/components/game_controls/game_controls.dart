@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/ludo_controller.dart';
+import 'reroll_control.dart';
 import 'sandbox_toolkit.dart';
 import 'turn_status_card.dart';
 
@@ -84,6 +85,10 @@ class _GameControlsState extends State<GameControls>
               pulseAnimation: _pulseController,
               cheatDiceValue: widget.cheatDiceValue,
             ),
+            if (c.shouldShowRerollControl) ...[
+              const SizedBox(height: 6),
+              RerollControl(controller: c),
+            ],
             if (c.game?.isTestModeActive == true && c.canUseSandbox) ...[
               const SizedBox(height: 6),
               SandboxToolkit(

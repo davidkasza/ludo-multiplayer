@@ -26,9 +26,18 @@ import {
   SAFE_GLOBAL_POSITIONS,
   globalPathIndexForSeat,
 } from "./ludo_rules";
+import {
+  canAffordReroll,
+  DEFAULT_REROLL_PRICING,
+  RerollPricing,
+  rerollCostAfterUses,
+  rerollPricingForStorage,
+  rerollPricingFromData,
+} from "./reroll";
 
 export const ROLL_DECISION_SECONDS = 30;
 export const MOVE_DECISION_SECONDS = 30;
+export const REROLL_DECISION_PHASE = "waitingForRerollDecision";
 const ACTIVE_GAME_MILLIS = 24 * 60 * 60 * 1000;
 const FINISHED_GAME_MILLIS = 60 * 60 * 1000;
 const RECENT_ACTION_LIMIT = 16;
@@ -61,6 +70,8 @@ interface GameState {
   maxPlayers: number;
   turnPhase: string;
   turnVersion: number;
+  rerollsUsed: Record<string, number>;
+  rerollPricing: RerollPricing;
   lastActionId: string;
   recentActionIds: string[];
   aiControlledPlayers: string[];
@@ -81,6 +92,20 @@ interface ActionResult {
   turnVersion: number;
   actionType?: string;
   [key: string]: unknown;
+}
+
+export type DiceRoller = () => number;
+
+function secureDiceRoll(): number {
+  return randomInt(1, 7);
+}
+
+function generatedDiceValue(rollDie: DiceRoller): number {
+  const value = rollDie();
+  if (!Number.isInteger(value) || value < 1 || value > 6) {
+    throw new HttpsError("internal", "The secure dice generator returned an invalid value.");
+  }
+  return value;
 }
 
 function requireString(value: unknown, field: string): string {
@@ -107,6 +132,20 @@ function parseIntent(raw: unknown): ActionIntent {
   return {roomCode, actionId, expectedTurnVersion};
 }
 
+interface RollBoundIntent extends ActionIntent {
+  expectedActionId: string;
+}
+
+function parseRollBoundIntent(raw: unknown): RollBoundIntent {
+  const intent = parseIntent(raw);
+  const data = raw as Record<string, unknown>;
+  const expectedActionId = requireString(data.expectedActionId, "expectedActionId").trim();
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(expectedActionId)) {
+    throw new HttpsError("invalid-argument", "expectedActionId is malformed.");
+  }
+  return {...intent, expectedActionId};
+}
+
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0))];
@@ -124,6 +163,22 @@ function numberMap(value: unknown): Record<string, number> {
   const result: Record<string, number> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (typeof raw === "number" && Number.isInteger(raw)) result[key] = raw;
+  }
+  return result;
+}
+
+function rerollUsageMap(
+  value: unknown,
+  players: readonly string[],
+  maximum: number,
+): Record<string, number> {
+  const source = numberMap(value);
+  const result: Record<string, number> = {};
+  for (const playerId of players) {
+    const uses = source[playerId];
+    if (Number.isInteger(uses) && uses >= 0 && uses <= maximum) {
+      result[playerId] = uses;
+    }
   }
   return result;
 }
@@ -176,6 +231,7 @@ function parseGame(data: DocumentData): GameState {
   if (!Number.isInteger(diceValue) || diceValue < 0 || diceValue > 6 || !Number.isSafeInteger(turnVersion)) {
     throw new HttpsError("data-loss", "The room action state is malformed.");
   }
+  const rerollPricing = rerollPricingFromData(data.rerollConfig);
   return {
     players,
     playerNames: stringMap(data.playerNames),
@@ -191,8 +247,11 @@ function parseGame(data: DocumentData): GameState {
     boardId: typeof data.boardId === "string" ? data.boardId : "classic",
     isTestModeActive: data.isTestModeActive === true,
     maxPlayers: Number.isInteger(data.maxPlayers) ? Number(data.maxPlayers) : 2,
-    turnPhase: data.turnPhase === "waitingForMove" ? "waitingForMove" : "waitingForRoll",
+    turnPhase: data.turnPhase === "waitingForMove" || data.turnPhase === REROLL_DECISION_PHASE ?
+      data.turnPhase : "waitingForRoll",
     turnVersion,
+    rerollsUsed: rerollUsageMap(data.rerollsUsed, players, rerollPricing.maxUsesPerMatch),
+    rerollPricing,
     lastActionId: typeof data.lastActionId === "string" ? data.lastActionId : "",
     recentActionIds: stringArray(data.recentActionIds).slice(-RECENT_ACTION_LIMIT),
     aiControlledPlayers: stringArray(data.aiControlledPlayers).filter((id) => players.includes(id)),
@@ -230,6 +289,25 @@ function duplicateResult(game: GameState, intent: ActionIntent): ActionResult | 
 
 function recentActions(game: GameState, actionId: string): string[] {
   return [...game.recentActionIds.filter((id) => id !== actionId), actionId].slice(-RECENT_ACTION_LIMIT);
+}
+
+function profileCoinBalance(data: DocumentData | undefined): number {
+  const coins = Number(data?.coins ?? 0);
+  return Number.isSafeInteger(coins) && coins > 0 ? coins : 0;
+}
+
+function rerollsUsedBy(game: GameState, playerId: string): number {
+  return game.rerollsUsed[playerId] ?? 0;
+}
+
+function assertCurrentRoll(game: GameState, expectedActionId: string): void {
+  const activeActionId = typeof game.activeDiceRoll?.actionId === "string" ?
+    game.activeDiceRoll.actionId : "";
+  if (activeActionId !== expectedActionId) {
+    throw new HttpsError("aborted", "The dice result has already changed.", {
+      reason: "stale-action",
+    });
+  }
 }
 
 function deadlineExpired(game: GameState, now: Timestamp): boolean {
@@ -301,6 +379,11 @@ function applyRoll(
   rolledValue: number,
   now: Timestamp,
   didExpire: boolean,
+  options: {
+    allowNoMoveRerollDecision?: boolean;
+    preserveTurnTiming?: boolean;
+    actionType?: "dice" | "reroll";
+  } = {},
 ): {update: Record<string, unknown>; result: ActionResult} {
   const playerId = game.currentTurn;
   const nextVersion = game.turnVersion + 1;
@@ -317,11 +400,12 @@ function applyRoll(
   };
   const update: Record<string, unknown> = {
     diceValue: rolledValue,
+    rerollConfig: rerollPricingForStorage(game.rerollPricing),
     activeDiceRoll: roll,
     activeMove: null,
     automationLease: null,
     lastActionId: actionId,
-    lastActionType: "dice",
+    lastActionType: options.actionType ?? "dice",
     recentActionIds: recentActions(game, actionId),
     turnVersion: nextVersion,
     ...reconnectOrTakeoverFields(game, playerId, callerUid, didExpire, nextVersion, now),
@@ -332,7 +416,13 @@ function applyRoll(
     Object.assign(update, {
       hasRolled: true,
       turnPhase: "waitingForMove",
-      ...turnTiming(now, MOVE_DECISION_SECONDS),
+      ...(!options.preserveTurnTiming ? turnTiming(now, MOVE_DECISION_SECONDS) : {}),
+    });
+  } else if (options.allowNoMoveRerollDecision) {
+    Object.assign(update, {
+      hasRolled: true,
+      turnPhase: REROLL_DECISION_PHASE,
+      ...(!options.preserveTurnTiming ? turnTiming(now, MOVE_DECISION_SECONDS) : {}),
     });
   } else {
     const resolution = resolveNoValidMove(game.players, playerId, game.finishOrder, rolledValue);
@@ -349,11 +439,51 @@ function applyRoll(
     result: {
       applied: true,
       actionId,
-      actionType: "dice",
+      actionType: options.actionType ?? "dice",
       turnVersion: nextVersion,
       diceValue: rolledValue,
       hasValidMove: validMove,
       keepsTurn,
+      awaitingRerollDecision: !validMove && options.allowNoMoveRerollDecision === true,
+    },
+  };
+}
+
+function applyNoValidMoveResolution(
+  game: GameState,
+  callerUid: string,
+  actionId: string,
+  now: Timestamp,
+  didExpire: boolean,
+): {update: Record<string, unknown>; result: ActionResult} {
+  const playerId = game.currentTurn;
+  const nextVersion = game.turnVersion + 1;
+  const resolution = resolveNoValidMove(
+    game.players,
+    playerId,
+    game.finishOrder,
+    game.diceValue,
+  );
+  return {
+    update: {
+      hasRolled: false,
+      currentTurn: resolution.nextPlayerId,
+      turnPhase: "waitingForRoll",
+      automationLease: null,
+      lastActionId: actionId,
+      lastActionType: "noMovePass",
+      recentActionIds: recentActions(game, actionId),
+      turnVersion: nextVersion,
+      ...turnTiming(now, ROLL_DECISION_SECONDS),
+      ...reconnectOrTakeoverFields(game, playerId, callerUid, didExpire, nextVersion, now),
+      ...activity(now),
+    },
+    result: {
+      applied: true,
+      actionId,
+      actionType: "noMovePass",
+      turnVersion: nextVersion,
+      keepsTurn: resolution.keepsTurn,
     },
   };
 }
@@ -475,6 +605,7 @@ export async function rollDiceIntent(
   db: Firestore,
   caller: CallerIdentity,
   rawData: unknown,
+  rollDie: DiceRoller = secureDiceRoll,
 ): Promise<ActionResult> {
   const intent = parseIntent(rawData);
   const data = rawData as Record<string, unknown>;
@@ -495,7 +626,7 @@ export async function rollDiceIntent(
     if (game.aiControlledPlayers.includes(caller.uid)) {
       throw new HttpsError("failed-precondition", "Request control back before rolling.");
     }
-    let rolledValue = randomInt(1, 7);
+    let rolledValue = generatedDiceValue(rollDie);
     if (forcedValue !== 0) {
       if (!game.isTestModeActive || !isSandboxOwnerToken(caller.token)) {
         throw new HttpsError("permission-denied", "Forced dice are only available to the Sandbox owner.");
@@ -506,7 +637,155 @@ export async function rollDiceIntent(
       rolledValue = forcedValue;
     }
     const now = Timestamp.now();
-    const applied = applyRoll(game, caller.uid, intent.actionId, rolledValue, now, false);
+    let allowNoMoveRerollDecision = false;
+    if (!hasValidMove(game.pieces[caller.uid] ?? [], rolledValue)) {
+      const profile = await transaction.get(db.collection("users").doc(caller.uid));
+      allowNoMoveRerollDecision = canAffordReroll(
+        game.rerollPricing,
+        rerollsUsedBy(game, caller.uid),
+        profileCoinBalance(profile.data()),
+      );
+    }
+    const applied = applyRoll(game, caller.uid, intent.actionId, rolledValue, now, false, {
+      allowNoMoveRerollDecision,
+    });
+    transaction.update(roomRef, applied.update);
+    return applied.result;
+  });
+}
+
+export async function useRerollIntent(
+  db: Firestore,
+  caller: CallerIdentity,
+  rawData: unknown,
+  rollDie: DiceRoller = secureDiceRoll,
+): Promise<ActionResult> {
+  const intent = parseRollBoundIntent(rawData);
+  const roomRef = db.collection("games").doc(intent.roomCode);
+  const profileRef = db.collection("users").doc(caller.uid);
+  return db.runTransaction(async (transaction: Transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists) throw new HttpsError("not-found", "Room not found.");
+    const game = parseGame(snapshot.data()!);
+    assertParticipant(game, caller);
+    ensurePlayable(game);
+    const duplicate = duplicateResult(game, intent);
+    if (duplicate) {
+      const profile = await transaction.get(profileRef);
+      const uses = rerollsUsedBy(game, caller.uid);
+      return {
+        ...duplicate,
+        actionType: "reroll",
+        coinBalance: profileCoinBalance(profile.data()),
+        rerollsUsed: uses,
+        nextRerollCost: rerollCostAfterUses(game.rerollPricing, uses),
+      };
+    }
+    assertCurrentVersion(game, intent);
+    assertCurrentRoll(game, intent.expectedActionId);
+    if (game.currentTurn !== caller.uid || !game.hasRolled ||
+        (game.turnPhase !== "waitingForMove" && game.turnPhase !== REROLL_DECISION_PHASE) ||
+        game.activeMove != null) {
+      throw new HttpsError("failed-precondition", "The current dice result cannot be rerolled.", {
+        reason: "reroll-unavailable",
+      });
+    }
+    if (caller.uid.startsWith("bot_") || game.aiControlledPlayers.includes(caller.uid)) {
+      throw new HttpsError("failed-precondition", "AI-controlled players cannot use Reroll.", {
+        reason: "ai-controlled",
+      });
+    }
+    const now = Timestamp.now();
+    if (deadlineExpired(game, now)) {
+      throw new HttpsError("failed-precondition", "The turn deadline has expired.", {
+        reason: "deadline-expired",
+      });
+    }
+    const used = rerollsUsedBy(game, caller.uid);
+    const price = rerollCostAfterUses(game.rerollPricing, used);
+    if (price == null) {
+      throw new HttpsError("failed-precondition", "The match Reroll limit has been reached.", {
+        reason: "reroll-limit-reached",
+        maximum: game.rerollPricing.maxUsesPerMatch,
+      });
+    }
+    const profile = await transaction.get(profileRef);
+    const coins = profileCoinBalance(profile.data());
+    if (coins < price) {
+      throw new HttpsError("resource-exhausted", "There are not enough coins for this Reroll.", {
+        reason: "insufficient-coins",
+        requiredCoins: price,
+        coinBalance: coins,
+      });
+    }
+    const nextUses = used + 1;
+    const nextBalance = coins - price;
+    const rolledValue = generatedDiceValue(rollDie);
+    const allowNoMoveRerollDecision = canAffordReroll(
+      game.rerollPricing,
+      nextUses,
+      nextBalance,
+    );
+    const applied = applyRoll(game, caller.uid, intent.actionId, rolledValue, now, false, {
+      allowNoMoveRerollDecision,
+      preserveTurnTiming: true,
+      actionType: "reroll",
+    });
+    transaction.update(profileRef, {coins: nextBalance});
+    transaction.update(roomRef, {
+      ...applied.update,
+      rerollsUsed: {...game.rerollsUsed, [caller.uid]: nextUses},
+    });
+    return {
+      ...applied.result,
+      chargedCoins: price,
+      coinBalance: nextBalance,
+      rerollsUsed: nextUses,
+      nextRerollCost: rerollCostAfterUses(game.rerollPricing, nextUses),
+    };
+  });
+}
+
+export async function passNoValidMoveIntent(
+  db: Firestore,
+  caller: CallerIdentity,
+  rawData: unknown,
+): Promise<ActionResult> {
+  const intent = parseRollBoundIntent(rawData);
+  const roomRef = db.collection("games").doc(intent.roomCode);
+  return db.runTransaction(async (transaction: Transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists) throw new HttpsError("not-found", "Room not found.");
+    const game = parseGame(snapshot.data()!);
+    assertParticipant(game, caller);
+    ensurePlayable(game);
+    const duplicate = duplicateResult(game, intent);
+    if (duplicate) return duplicate;
+    assertCurrentVersion(game, intent);
+    assertCurrentRoll(game, intent.expectedActionId);
+    if (game.currentTurn !== caller.uid || !game.hasRolled ||
+        game.turnPhase !== REROLL_DECISION_PHASE || game.activeMove != null ||
+        hasValidMove(game.pieces[caller.uid] ?? [], game.diceValue)) {
+      throw new HttpsError("failed-precondition", "There is no no-move decision to pass.", {
+        reason: "pass-unavailable",
+      });
+    }
+    if (game.aiControlledPlayers.includes(caller.uid)) {
+      throw new HttpsError("failed-precondition", "Request control back before passing.");
+    }
+    const now = Timestamp.now();
+    if (deadlineExpired(game, now)) {
+      throw new HttpsError("failed-precondition", "The turn deadline has expired.", {
+        reason: "deadline-expired",
+      });
+    }
+    const applied = applyNoValidMoveResolution(
+      game,
+      caller.uid,
+      intent.actionId,
+      now,
+      false,
+    );
     transaction.update(roomRef, applied.update);
     return applied.result;
   });
@@ -586,6 +865,7 @@ export async function processTurnTimeoutIntent(
   db: Firestore,
   caller: CallerIdentity,
   rawData: unknown,
+  rollDie: DiceRoller = secureDiceRoll,
 ): Promise<ActionResult> {
   const intent = parseIntent(rawData);
   const roomRef = db.collection("games").doc(intent.roomCode);
@@ -606,7 +886,25 @@ export async function processTurnTimeoutIntent(
       throw new HttpsError("failed-precondition", "The turn deadline has not expired.");
     }
     if (game.turnPhase === "waitingForRoll" && !game.hasRolled) {
-      const applied = applyRoll(game, caller.uid, intent.actionId, randomInt(1, 7), now, expired);
+      const applied = applyRoll(
+        game,
+        caller.uid,
+        intent.actionId,
+        generatedDiceValue(rollDie),
+        now,
+        expired,
+      );
+      transaction.update(roomRef, applied.update);
+      return applied.result;
+    }
+    if (game.turnPhase === REROLL_DECISION_PHASE && game.hasRolled) {
+      const applied = applyNoValidMoveResolution(
+        game,
+        caller.uid,
+        intent.actionId,
+        now,
+        expired,
+      );
       transaction.update(roomRef, applied.update);
       return applied.result;
     }
@@ -698,6 +996,8 @@ export async function startGameIntent(
       turnPhase: "waitingForRoll",
       ...turnTiming(now, ROLL_DECISION_SECONDS),
       turnVersion: nextVersion,
+      rerollsUsed: {},
+      rerollConfig: rerollPricingForStorage(DEFAULT_REROLL_PRICING),
       lastActionId: intent.actionId,
       lastActionType: "start",
       recentActionIds: [intent.actionId],
@@ -851,7 +1151,8 @@ export async function recoverGameStateIntent(
     }
     const now = Timestamp.now();
     const nextVersion = game.turnVersion + 1;
-    const phase = game.hasRolled ? "waitingForMove" : "waitingForRoll";
+    const phase = game.turnPhase === REROLL_DECISION_PHASE ?
+      REROLL_DECISION_PHASE : game.hasRolled ? "waitingForMove" : "waitingForRoll";
     transaction.update(roomRef, {
       ...(legacyAction ? {activeMove: null, activeDiceRoll: null} : {}),
       automationLease: null,
@@ -926,6 +1227,8 @@ export function createInitialGameForTests(overrides: Partial<DocumentData> = {})
     maxPlayers: 2,
     turnPhase: "waitingForRoll",
     turnVersion: 1,
+    rerollsUsed: {},
+    rerollConfig: rerollPricingForStorage(DEFAULT_REROLL_PRICING),
     lastActionId: "",
     recentActionIds: [],
     aiControlledPlayers: [],

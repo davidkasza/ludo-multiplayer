@@ -13,6 +13,7 @@ import '../game/classic_board.dart';
 import '../game/dice_skin.dart';
 import '../game/ludo_palette.dart';
 import '../game/ludo_presentation.dart';
+import '../game/reroll_power_up.dart';
 import '../models/ludo_models.dart';
 import '../security/sandbox_access.dart';
 import '../services/gameplay_functions.dart';
@@ -422,8 +423,81 @@ class LudoController extends ChangeNotifier
       hasRolled: currentGame?.hasRolled == true,
       isWaitingForMove: currentGame?.turnPhase == LudoGame.waitingForMove,
       isDiceRolling: isDiceRolling,
-      hasActiveMovePresentation: visualActiveMove != null,
+      hasActiveMovePresentation:
+          visualActiveMove != null ||
+          movementRequestPending ||
+          rerollActionPending,
     );
+  }
+
+  bool get _isRerollActionContext {
+    final currentGame = game;
+    final currentUserId = user?.uid;
+    final activeRoll = currentGame?.activeDiceRoll;
+    if (currentGame == null || currentUserId == null || activeRoll == null) {
+      return false;
+    }
+    final validPhase =
+        currentGame.turnPhase == LudoGame.waitingForMove ||
+        currentGame.turnPhase == LudoGame.waitingForRerollDecision;
+    return currentGame.status == 'playing' &&
+        currentGame.currentTurn == currentUserId &&
+        currentGame.hasRolled &&
+        validPhase &&
+        activeRoll.playerId == currentUserId &&
+        currentGame.activeMove == null &&
+        visualActiveMove == null &&
+        !movementRequestPending;
+  }
+
+  int get myRerollsUsed {
+    final currentUserId = user?.uid;
+    return currentUserId == null ? 0 : game?.rerollsUsedBy(currentUserId) ?? 0;
+  }
+
+  int? get currentRerollCost => game?.rerollCostFor(user?.uid ?? '');
+
+  RerollAvailability get currentRerollAvailability => rerollAvailability(
+    isActionContext: _isRerollActionContext,
+    isHumanControlled: isMyTurn,
+    isDiceRolling: isDiceRolling,
+    requestPending: rerollActionPending,
+    pricing: game?.rerollPricing,
+    uses: myRerollsUsed,
+    coins: profileCoins,
+  );
+
+  bool get shouldShowRerollControl =>
+      _isRerollActionContext && isMyTurn && !isDiceRolling;
+
+  bool get canUseReroll =>
+      currentRerollAvailability == RerollAvailability.available;
+
+  bool get canPassNoValidMove =>
+      _isRerollActionContext &&
+      game?.turnPhase == LudoGame.waitingForRerollDecision &&
+      !isDiceRolling &&
+      !rerollActionPending;
+
+  String? get rerollUnavailableLabel {
+    switch (currentRerollAvailability) {
+      case RerollAvailability.limitReached:
+        final maximum = game?.rerollPricing?.maxUsesPerMatch;
+        return maximum == null
+            ? 'Reroll limit reached'
+            : '$maximum/$maximum Rerolls used';
+      case RerollAvailability.insufficientCoins:
+        return 'Not enough coins';
+      case RerollAvailability.requestPending:
+        return 'Processing...';
+      case RerollAvailability.configurationUnavailable:
+        return 'Reroll unavailable';
+      case RerollAvailability.available:
+      case RerollAvailability.unavailableContext:
+      case RerollAvailability.aiControlled:
+      case RerollAvailability.rolling:
+        return null;
+    }
   }
 
   bool get isHost {

@@ -179,7 +179,9 @@ class _GameplayFeedbackOverlayState extends State<GameplayFeedbackOverlay>
             actionTurnVersion: completedRoll.turnVersion,
             currentTurnVersion: game.turnVersion,
             lastActionType: game.lastActionType,
-            expectedActionType: 'dice',
+            expectedActionType: game.lastActionType == 'reroll'
+                ? 'reroll'
+                : 'dice',
           )) {
         final reason = LudoPresentation.extraTurnReasonAfterRoll(
           roll: completedRoll,

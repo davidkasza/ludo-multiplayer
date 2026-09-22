@@ -42,6 +42,9 @@ service cloud.firestore {
         && data.activeDiceRoll == null
         && data.turnPhase == 'waitingForRoll'
         && data.turnVersion == 0
+        && data.get('rerollsUsed', {}) is map
+        && data.get('rerollsUsed', {}).size() == 0
+        && data.get('rerollConfig', null) == null
         && data.lastActionId == ''
         && data.lastActionType == ''
         && data.aiControlledPlayers is list
@@ -84,11 +87,14 @@ service cloud.firestore {
         && resource.data.hostUid == request.auth.uid
         && request.resource.data.hostUid == resource.data.hostUid
         && validSandboxChoice(request.resource.data)
+        && request.resource.data.get('rerollsUsed', {}) is map
+        && request.resource.data.get('rerollsUsed', {}).size() == 0
         && request.resource.data.players.hasAll(existingHumanPlayers(resource.data))
         && request.resource.data.players.hasOnly(existingHumanPlayers(resource.data).concat(botIds()))
         && changed.hasOnly([
           'players', 'playerNames', 'preferredColors', 'playerDiceSkins', 'playerSeats',
           'seatTypes', 'pieces', 'boardId', 'isTestModeActive', 'maxPlayers',
+          'rerollsUsed',
           'opponentType', 'isPublic', 'openSeats', 'matchmakingOpen',
           'lastActivityAt', 'expiresAt'
         ]);

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../game/dice_skin.dart';
+import '../game/reroll_power_up.dart';
 
 int _readInt(Object? value, int fallback) =>
     value is num ? value.toInt() : fallback;
@@ -416,6 +417,7 @@ class LudoGame {
 
   static const String waitingForRoll = 'waitingForRoll';
   static const String waitingForMove = 'waitingForMove';
+  static const String waitingForRerollDecision = 'waitingForRerollDecision';
   static const int rollDecisionSeconds = 30;
   static const int moveDecisionSeconds = 30;
 
@@ -449,6 +451,8 @@ class LudoGame {
   final Timestamp? turnStartedAt;
   final int turnDurationSeconds;
   final int turnVersion;
+  final RerollPricing? rerollPricing;
+  final Map<String, int> rerollsUsed;
   final String lastActionId;
   final String lastActionType;
   final List<String> aiControlledPlayers;
@@ -489,6 +493,8 @@ class LudoGame {
     required this.turnStartedAt,
     required this.turnDurationSeconds,
     required this.turnVersion,
+    this.rerollPricing,
+    this.rerollsUsed = const <String, int>{},
     required this.lastActionId,
     required this.lastActionType,
     required this.aiControlledPlayers,
@@ -635,6 +641,12 @@ class LudoGame {
     return forfeitedPlayers.contains(playerId);
   }
 
+  int rerollsUsedBy(String playerId) => rerollsUsed[playerId] ?? 0;
+
+  int? rerollCostFor(String playerId) {
+    return rerollPricing?.costAfterUses(rerollsUsedBy(playerId));
+  }
+
   String diceSkinIdForPlayer(String playerId) {
     return DiceSkinResolver.forPlayer(playerDiceSkins, playerId).id;
   }
@@ -773,6 +785,29 @@ class LudoGame {
       map['forfeitedPlayers'],
     ).where(players.contains).toSet().toList();
 
+    RerollPricing? rerollPricing;
+    final rawRerollPricing = _readMap(map['rerollConfig']);
+    if (rawRerollPricing != null) {
+      try {
+        rerollPricing = RerollPricing.fromMap(rawRerollPricing);
+      } on FormatException catch (error) {
+        debugPrint('Ignoring malformed server Reroll pricing: $error');
+      }
+    }
+
+    final rerollsUsed = <String, int>{};
+    final rawRerollsUsed = map['rerollsUsed'];
+    if (rawRerollsUsed is Map) {
+      Map<String, dynamic>.from(rawRerollsUsed).forEach((playerId, value) {
+        if (!players.contains(playerId) || value is! num) return;
+        final uses = value.toInt();
+        if (uses >= 0 &&
+            (rerollPricing == null || uses <= rerollPricing.maxUsesPerMatch)) {
+          rerollsUsed[playerId] = uses;
+        }
+      });
+    }
+
     final playerPresence = <String, PlayerPresence>{};
     final rawPresence = map['playerPresence'];
     if (rawPresence is Map) {
@@ -806,7 +841,12 @@ class LudoGame {
       debugPrint('Ignoring malformed activeDiceRoll descriptor');
     }
     final rawTurnPhase = _readString(map['turnPhase']);
-    final turnPhase = {waitingForRoll, waitingForMove}.contains(rawTurnPhase)
+    final turnPhase =
+        {
+          waitingForRoll,
+          waitingForMove,
+          waitingForRerollDecision,
+        }.contains(rawTurnPhase)
         ? rawTurnPhase
         : (_readBool(map['hasRolled']) ? waitingForMove : waitingForRoll);
     if (rawTurnPhase.isNotEmpty && rawTurnPhase != turnPhase) {
@@ -823,7 +863,9 @@ class LudoGame {
         }
       }
       final hasRolled = _readBool(map['hasRolled']);
-      if ((hasRolled && (rawDiceValue == 0 || turnPhase != waitingForMove)) ||
+      final validRolledPhase =
+          turnPhase == waitingForMove || turnPhase == waitingForRerollDecision;
+      if ((hasRolled && (rawDiceValue == 0 || !validRolledPhase)) ||
           (!hasRolled && turnPhase != waitingForRoll)) {
         throw const FormatException('Playing game has an invalid turn phase');
       }
@@ -887,6 +929,8 @@ class LudoGame {
           : null,
       turnDurationSeconds: turnDurationSeconds,
       turnVersion: _readInt(map['turnVersion'], 0),
+      rerollPricing: rerollPricing,
+      rerollsUsed: rerollsUsed,
       lastActionId: _readString(map['lastActionId']),
       lastActionType: _readString(map['lastActionType']),
       aiControlledPlayers: aiControlledPlayers,
@@ -946,6 +990,8 @@ class LudoGame {
       'turnStartedAt': turnStartedAt,
       'turnDurationSeconds': turnDurationSeconds,
       'turnVersion': turnVersion,
+      'rerollConfig': rerollPricing?.toMap(),
+      'rerollsUsed': rerollsUsed,
       'lastActionId': lastActionId,
       'lastActionType': lastActionType,
       'aiControlledPlayers': aiControlledPlayers,

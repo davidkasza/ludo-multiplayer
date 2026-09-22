@@ -8,12 +8,14 @@ import {
   CallerIdentity,
   forfeitMatchIntent,
   movePieceIntent,
+  passNoValidMoveIntent,
   processTurnTimeoutIntent,
   recoverGameStateIntent,
   requestTakeBackControlIntent,
   rollDiceIntent,
   sandboxTeleportIntent,
   startGameIntent,
+  useRerollIntent,
 } from "./game_service";
 import {
   claimMatchRewardIntent,
@@ -49,6 +51,12 @@ export const rollDice = onCall(callableOptions, (request) =>
 
 export const movePiece = onCall(callableOptions, (request) =>
   movePieceIntent(db, caller(request), request.data));
+
+export const useReroll = onCall(callableOptions, (request) =>
+  useRerollIntent(db, caller(request), request.data));
+
+export const passNoValidMove = onCall(callableOptions, (request) =>
+  passNoValidMoveIntent(db, caller(request), request.data));
 
 export const processTurnTimeout = onCall(callableOptions, (request) =>
   processTurnTimeoutIntent(db, caller(request), request.data));
