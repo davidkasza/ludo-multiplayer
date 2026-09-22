@@ -8,6 +8,7 @@ import {
   movePieceIntent,
   passNoValidMoveIntent,
   processTurnTimeoutIntent,
+  REROLL_WINDOW_MILLIS,
   rollDiceIntent,
   sandboxTeleportIntent,
   startGameIntent,
@@ -45,6 +46,7 @@ describe("authoritative gameplay service", () => {
     noValidMove?: boolean;
     aiControlled?: boolean;
   } = {}): Promise<void> {
+    const now = Timestamp.now();
     await db.collection("users").doc("player-a").set({coins});
     await db.collection("games").doc("ABCDE").set(createInitialGameForTests({
       diceValue: 1,
@@ -72,9 +74,19 @@ describe("authoritative gameplay service", () => {
       }),
       rerollsUsed: uses > 0 ? {"player-a": uses} : {},
       aiControlledPlayers: aiControlled ? ["player-a"] : [],
-      turnStartedAt: Timestamp.now(),
+      turnStartedAt: now,
       turnDurationSeconds: 30,
+      rerollAvailableAt: Timestamp.fromMillis(now.toMillis() - 100),
+      rerollDeadlineAt: Timestamp.fromMillis(now.toMillis() + 30000),
     }));
+  }
+
+  async function reopenRerollWindow(): Promise<void> {
+    const now = Date.now();
+    await db.collection("games").doc("ABCDE").update({
+      rerollAvailableAt: Timestamp.fromMillis(now - 100),
+      rerollDeadlineAt: Timestamp.fromMillis(now + 30000),
+    });
   }
 
   it("rejects a non-participant even when intent fields are otherwise valid", async () => {
@@ -126,6 +138,7 @@ describe("authoritative gameplay service", () => {
     let expectedActionId = "initial_roll_1";
     const expectedBalances = [150, 90, 20];
     for (let index = 0; index < 3; index++) {
+      await reopenRerollWindow();
       const actionId = `reroll_action_${index + 1}`;
       const result = await useRerollIntent(db, {uid: "player-a"}, {
         roomCode: "ABCDE",
@@ -285,8 +298,11 @@ describe("authoritative gameplay service", () => {
     expect(game.hasRolled).to.equal(true);
   });
 
-  it("allows a no-move Continue without spending coins", async () => {
+  it("resolves a no-move decision after the Reroll window without spending coins", async () => {
     await seedRerollState({noValidMove: true});
+    await db.collection("games").doc("ABCDE").update({
+      rerollDeadlineAt: Timestamp.fromMillis(Date.now() - 1),
+    });
     await passNoValidMoveIntent(db, {uid: "player-a"}, {
       roomCode: "ABCDE",
       expectedTurnVersion: 1,
@@ -303,7 +319,7 @@ describe("authoritative gameplay service", () => {
   it("times out a no-move decision without spending coins or a Reroll", async () => {
     await seedRerollState({noValidMove: true});
     await db.collection("games").doc("ABCDE").update({
-      turnStartedAt: Timestamp.fromMillis(Date.now() - 31000),
+      rerollDeadlineAt: Timestamp.fromMillis(Date.now() - 1),
     });
     await processTurnTimeoutIntent(db, {uid: "player-b"}, {
       roomCode: "ABCDE",
@@ -312,7 +328,7 @@ describe("authoritative gameplay service", () => {
     });
     const game = (await db.collection("games").doc("ABCDE").get()).data()!;
     expect(game.rerollsUsed).to.deep.equal({});
-    expect(game.aiControlledPlayers).to.include("player-a");
+    expect(game.aiControlledPlayers).not.to.include("player-a");
     expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(200);
   });
 
@@ -326,6 +342,11 @@ describe("authoritative gameplay service", () => {
     let game = (await db.collection("games").doc("ABCDE").get()).data()!;
     expect(game.turnPhase).to.equal("waitingForRerollDecision");
     expect(game.currentTurn).to.equal("player-a");
+    expect(game.rerollAvailableAt).to.be.instanceOf(Timestamp);
+    expect(game.rerollDeadlineAt).to.be.instanceOf(Timestamp);
+    expect(
+      game.rerollDeadlineAt.toMillis() - game.rerollAvailableAt.toMillis(),
+    ).to.equal(REROLL_WINDOW_MILLIS);
 
     await db.collection("games").doc("ABCDE").set(createInitialGameForTests());
     await db.collection("users").doc("player-a").set({coins: 49});
@@ -337,6 +358,42 @@ describe("authoritative gameplay service", () => {
     game = (await db.collection("games").doc("ABCDE").get()).data()!;
     expect(game.turnPhase).to.equal("waitingForRoll");
     expect(game.currentTurn).to.equal("player-b");
+  });
+
+  it("rejects Reroll before or after its authoritative interaction window", async () => {
+    await seedRerollState({coins: 100});
+    for (const timing of [
+      {
+        available: Date.now() + 10000,
+        deadline: Date.now() + 13000,
+        action: "early_reroll_1",
+      },
+      {
+        available: Date.now() - 4000,
+        deadline: Date.now() - 1000,
+        action: "late_reroll_1",
+      },
+    ]) {
+      await db.collection("games").doc("ABCDE").update({
+        rerollAvailableAt: Timestamp.fromMillis(timing.available),
+        rerollDeadlineAt: Timestamp.fromMillis(timing.deadline),
+      });
+      try {
+        await useRerollIntent(db, {uid: "player-a"}, {
+          roomCode: "ABCDE",
+          expectedTurnVersion: 1,
+          expectedActionId: "initial_roll_1",
+          actionId: timing.action,
+        }, () => 2);
+        expect.fail("Expected the closed Reroll window to reject the action");
+      } catch (error) {
+        expect((error as HttpsError).code).to.equal("failed-precondition");
+        expect((error as HttpsError).details).to.deep.include({
+          reason: "reroll-window-expired",
+        });
+      }
+    }
+    expect((await db.collection("users").doc("player-a").get()).get("coins")).to.equal(100);
   });
 
   it("validates movement, applies capture, and awards the extra turn", async () => {

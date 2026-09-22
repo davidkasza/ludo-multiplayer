@@ -6,10 +6,7 @@ import '../../controllers/ludo_controller.dart';
 class RoomCodeBar extends StatelessWidget {
   final LudoController controller;
 
-  const RoomCodeBar({
-    super.key,
-    required this.controller,
-  });
+  const RoomCodeBar({super.key, required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -17,11 +14,11 @@ class RoomCodeBar extends StatelessWidget {
     final myStyle = controller.colorStyleForPlayer(myId);
 
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
+        color: Colors.white.withOpacity(0.025),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        border: Border.all(color: Colors.white.withOpacity(0.035)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -37,54 +34,59 @@ class RoomCodeBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          GestureDetector(
-            onTap: () async {
-              if (controller.gameId.isEmpty) return;
+          Tooltip(
+            message: 'Copy room code ${controller.gameId}',
+            child: GestureDetector(
+              onTap: () async {
+                if (controller.gameId.isEmpty) return;
 
-              await Clipboard.setData(
-                ClipboardData(text: controller.gameId),
-              );
+                await Clipboard.setData(ClipboardData(text: controller.gameId));
 
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('📋 Room code successfully copied!'),
-                    duration: Duration(seconds: 2),
-                    behavior: SnackBarBehavior.floating,
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('📋 Room code successfully copied!'),
+                      duration: Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
                   ),
-                );
-              }
-            },
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 3,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.1),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: Colors.white.withOpacity(0.07)),
                   ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Room Code: ${controller.gameId}',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          color: Colors.white,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          controller.gameId,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            color: Colors.white.withOpacity(0.66),
+                            fontSize: 11,
+                            letterSpacing: 0.5,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Text('📋', style: TextStyle(fontSize: 12)),
-                  ],
+                      const SizedBox(width: 5),
+                      Icon(
+                        Icons.copy_rounded,
+                        size: 13,
+                        color: Colors.white.withOpacity(0.55),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

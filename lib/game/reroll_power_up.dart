@@ -62,6 +62,7 @@ RerollAvailability rerollAvailability({
   required bool isHumanControlled,
   required bool isDiceRolling,
   required bool requestPending,
+  required bool isWindowOpen,
   required RerollPricing? pricing,
   required int uses,
   required int coins,
@@ -70,9 +71,19 @@ RerollAvailability rerollAvailability({
   if (!isHumanControlled) return RerollAvailability.aiControlled;
   if (isDiceRolling) return RerollAvailability.rolling;
   if (requestPending) return RerollAvailability.requestPending;
+  if (!isWindowOpen) return RerollAvailability.unavailableContext;
   if (pricing == null) return RerollAvailability.configurationUnavailable;
   final cost = pricing.costAfterUses(uses);
   if (cost == null) return RerollAvailability.limitReached;
   if (coins < cost) return RerollAvailability.insufficientCoins;
   return RerollAvailability.available;
+}
+
+bool isRerollWindowOpen({
+  required DateTime? availableAt,
+  required DateTime? deadlineAt,
+  required DateTime now,
+}) {
+  if (availableAt == null || deadlineAt == null) return false;
+  return !now.isBefore(availableAt) && now.isBefore(deadlineAt);
 }

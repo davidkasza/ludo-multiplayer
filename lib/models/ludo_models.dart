@@ -449,6 +449,8 @@ class LudoGame {
   final String turnPhase;
   final Timestamp? turnDeadlineAt;
   final Timestamp? turnStartedAt;
+  final Timestamp? rerollAvailableAt;
+  final Timestamp? rerollDeadlineAt;
   final int turnDurationSeconds;
   final int turnVersion;
   final RerollPricing? rerollPricing;
@@ -491,6 +493,8 @@ class LudoGame {
     required this.turnPhase,
     required this.turnDeadlineAt,
     required this.turnStartedAt,
+    this.rerollAvailableAt,
+    this.rerollDeadlineAt,
     required this.turnDurationSeconds,
     required this.turnVersion,
     this.rerollPricing,
@@ -927,6 +931,12 @@ class LudoGame {
       turnStartedAt: map['turnStartedAt'] is Timestamp
           ? map['turnStartedAt'] as Timestamp
           : null,
+      rerollAvailableAt: map['rerollAvailableAt'] is Timestamp
+          ? map['rerollAvailableAt'] as Timestamp
+          : null,
+      rerollDeadlineAt: map['rerollDeadlineAt'] is Timestamp
+          ? map['rerollDeadlineAt'] as Timestamp
+          : null,
       turnDurationSeconds: turnDurationSeconds,
       turnVersion: _readInt(map['turnVersion'], 0),
       rerollPricing: rerollPricing,
@@ -988,6 +998,8 @@ class LudoGame {
       'turnPhase': turnPhase,
       'turnDeadlineAt': turnDeadlineAt,
       'turnStartedAt': turnStartedAt,
+      'rerollAvailableAt': rerollAvailableAt,
+      'rerollDeadlineAt': rerollDeadlineAt,
       'turnDurationSeconds': turnDurationSeconds,
       'turnVersion': turnVersion,
       'rerollConfig': rerollPricing?.toMap(),

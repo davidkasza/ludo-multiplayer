@@ -58,7 +58,7 @@ mixin LudoBotMixin on ChangeNotifier {
 
     final playerId = currentGame.currentTurn;
     final automated = currentGame.isAiControlled(playerId);
-    final deadline = currentGame.effectiveTurnDeadline;
+    final deadline = _automationDeadline(currentGame);
     if (!automated && deadline == null) {
       _cancelScheduledAutomation();
       return;
@@ -107,7 +107,7 @@ mixin LudoBotMixin on ChangeNotifier {
       currentGame.turnVersion,
       currentGame.hasRolled,
       currentGame.diceValue,
-      currentGame.effectiveTurnDeadline?.millisecondsSinceEpoch ?? 0,
+      _automationDeadline(currentGame)?.millisecondsSinceEpoch ?? 0,
       currentGame.isAiControlled(currentGame.currentTurn),
     ].join('|');
   }
@@ -120,7 +120,7 @@ mixin LudoBotMixin on ChangeNotifier {
       return;
     }
 
-    final deadline = currentGame.effectiveTurnDeadline;
+    final deadline = _automationDeadline(currentGame);
     if (!currentGame.isAiControlled(currentGame.currentTurn) &&
         (deadline == null || deadline.isAfter(estimatedServerNow))) {
       return;
@@ -150,6 +150,15 @@ mixin LudoBotMixin on ChangeNotifier {
       _scheduledAutomationStateKey = null;
       Future<void>.delayed(const Duration(milliseconds: 180), syncBotTurn);
     }
+  }
+
+  DateTime? _automationDeadline(LudoGame currentGame) {
+    if (currentGame.turnPhase == LudoGame.waitingForRerollDecision &&
+        currentGame.hasRolled) {
+      return currentGame.rerollDeadlineAt?.toDate() ??
+          currentGame.effectiveTurnDeadline;
+    }
+    return currentGame.effectiveTurnDeadline;
   }
 
   Future<bool> requestTakeBackControl() async {

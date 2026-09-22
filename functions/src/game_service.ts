@@ -38,6 +38,8 @@ import {
 export const ROLL_DECISION_SECONDS = 30;
 export const MOVE_DECISION_SECONDS = 30;
 export const REROLL_DECISION_PHASE = "waitingForRerollDecision";
+export const REROLL_WINDOW_MILLIS = 3000;
+const DICE_ROLL_PRESENTATION_MILLIS = 800;
 const ACTIVE_GAME_MILLIS = 24 * 60 * 60 * 1000;
 const FINISHED_GAME_MILLIS = 60 * 60 * 1000;
 const RECENT_ACTION_LIMIT = 16;
@@ -79,6 +81,8 @@ interface GameState {
   forfeitedPlayers: string[];
   turnStartedAt?: Timestamp;
   turnDeadlineAt?: Timestamp;
+  rerollAvailableAt?: Timestamp;
+  rerollDeadlineAt?: Timestamp;
   turnDurationSeconds: number;
   startedAt?: Timestamp;
   activeMove?: Record<string, unknown> | null;
@@ -232,6 +236,19 @@ function parseGame(data: DocumentData): GameState {
     throw new HttpsError("data-loss", "The room action state is malformed.");
   }
   const rerollPricing = rerollPricingFromData(data.rerollConfig);
+  const activeRoll = data.activeDiceRoll && typeof data.activeDiceRoll === "object" ?
+    data.activeDiceRoll as Record<string, unknown> : null;
+  const legacyRollStart = activeRoll?.committedAt instanceof Timestamp ?
+    activeRoll.committedAt.toMillis() : Number(activeRoll?.startedAt ?? 0);
+  const legacyRollDuration = Number(activeRoll?.durationMs ?? DICE_ROLL_PRESENTATION_MILLIS);
+  const rerollAvailableAt = data.rerollAvailableAt instanceof Timestamp ?
+    data.rerollAvailableAt :
+    Number.isSafeInteger(legacyRollStart) && legacyRollStart > 0 &&
+      Number.isSafeInteger(legacyRollDuration) && legacyRollDuration > 0 ?
+      Timestamp.fromMillis(legacyRollStart + legacyRollDuration) : undefined;
+  const rerollDeadlineAt = data.rerollDeadlineAt instanceof Timestamp ?
+    data.rerollDeadlineAt : rerollAvailableAt ?
+      Timestamp.fromMillis(rerollAvailableAt.toMillis() + REROLL_WINDOW_MILLIS) : undefined;
   return {
     players,
     playerNames: stringMap(data.playerNames),
@@ -259,6 +276,8 @@ function parseGame(data: DocumentData): GameState {
     forfeitedPlayers: stringArray(data.forfeitedPlayers).filter((id) => players.includes(id)),
     turnStartedAt: data.turnStartedAt instanceof Timestamp ? data.turnStartedAt : undefined,
     turnDeadlineAt: data.turnDeadlineAt instanceof Timestamp ? data.turnDeadlineAt : undefined,
+    rerollAvailableAt,
+    rerollDeadlineAt,
     turnDurationSeconds: Number.isInteger(data.turnDurationSeconds) ? Number(data.turnDurationSeconds) : 0,
     startedAt: data.startedAt instanceof Timestamp ? data.startedAt : undefined,
     activeMove: data.activeMove && typeof data.activeMove === "object" ? data.activeMove : null,
@@ -316,6 +335,11 @@ function deadlineExpired(game: GameState, now: Timestamp): boolean {
     return startedAt.toMillis() + game.turnDurationSeconds * 1000 <= now.toMillis();
   }
   return game.turnDeadlineAt != null && game.turnDeadlineAt.toMillis() <= now.toMillis();
+}
+
+function rerollWindowExpired(game: GameState, now: Timestamp): boolean {
+  return game.rerollDeadlineAt != null &&
+    game.rerollDeadlineAt.toMillis() <= now.toMillis();
 }
 
 function turnTiming(now: Timestamp, seconds: number): Record<string, unknown> {
@@ -393,7 +417,7 @@ function applyRoll(
     turnVersion: nextVersion,
     playerId,
     startedAt: now.toMillis(),
-    durationMs: 800,
+    durationMs: DICE_ROLL_PRESENTATION_MILLIS,
     result: rolledValue,
     stateApplied: true,
     committedAt: FieldValue.serverTimestamp(),
@@ -401,6 +425,12 @@ function applyRoll(
   const update: Record<string, unknown> = {
     diceValue: rolledValue,
     rerollConfig: rerollPricingForStorage(game.rerollPricing),
+    rerollAvailableAt: Timestamp.fromMillis(
+      now.toMillis() + DICE_ROLL_PRESENTATION_MILLIS,
+    ),
+    rerollDeadlineAt: Timestamp.fromMillis(
+      now.toMillis() + DICE_ROLL_PRESENTATION_MILLIS + REROLL_WINDOW_MILLIS,
+    ),
     activeDiceRoll: roll,
     activeMove: null,
     automationLease: null,
@@ -431,6 +461,8 @@ function applyRoll(
       hasRolled: false,
       currentTurn: resolution.nextPlayerId,
       turnPhase: "waitingForRoll",
+      rerollAvailableAt: null,
+      rerollDeadlineAt: null,
       ...turnTiming(now, ROLL_DECISION_SECONDS),
     });
   }
@@ -469,6 +501,8 @@ function applyNoValidMoveResolution(
       hasRolled: false,
       currentTurn: resolution.nextPlayerId,
       turnPhase: "waitingForRoll",
+      rerollAvailableAt: null,
+      rerollDeadlineAt: null,
       automationLease: null,
       lastActionId: actionId,
       lastActionType: "noMovePass",
@@ -546,6 +580,8 @@ function applyMove(
     finishOrder,
     activeMove,
     activeDiceRoll: null,
+    rerollAvailableAt: null,
+    rerollDeadlineAt: null,
     automationLease: null,
     turnPhase: "waitingForRoll",
     turnStartedAt: matchFinished ? null : now,
@@ -696,6 +732,13 @@ export async function useRerollIntent(
       });
     }
     const now = Timestamp.now();
+    if (game.rerollAvailableAt == null || game.rerollDeadlineAt == null ||
+        now.toMillis() < game.rerollAvailableAt.toMillis() ||
+        now.toMillis() >= game.rerollDeadlineAt.toMillis()) {
+      throw new HttpsError("failed-precondition", "The Reroll window has expired.", {
+        reason: "reroll-window-expired",
+      });
+    }
     if (deadlineExpired(game, now)) {
       throw new HttpsError("failed-precondition", "The turn deadline has expired.", {
         reason: "deadline-expired",
@@ -774,6 +817,11 @@ export async function passNoValidMoveIntent(
       throw new HttpsError("failed-precondition", "Request control back before passing.");
     }
     const now = Timestamp.now();
+    if (!rerollWindowExpired(game, now)) {
+      throw new HttpsError("failed-precondition", "The Reroll decision window is still active.", {
+        reason: "reroll-window-active",
+      });
+    }
     if (deadlineExpired(game, now)) {
       throw new HttpsError("failed-precondition", "The turn deadline has expired.", {
         reason: "deadline-expired",
@@ -881,9 +929,11 @@ export async function processTurnTimeoutIntent(
     assertCurrentVersion(game, intent);
     const now = Timestamp.now();
     const expired = deadlineExpired(game, now);
+    const rerollDecisionExpired = game.turnPhase === REROLL_DECISION_PHASE &&
+      game.hasRolled && rerollWindowExpired(game, now);
     const automated = game.currentTurn.startsWith("bot_") || game.aiControlledPlayers.includes(game.currentTurn);
-    if (!automated && !expired) {
-      throw new HttpsError("failed-precondition", "The turn deadline has not expired.");
+    if (!automated && !expired && !rerollDecisionExpired) {
+      throw new HttpsError("failed-precondition", "No authoritative decision deadline has expired.");
     }
     if (game.turnPhase === "waitingForRoll" && !game.hasRolled) {
       const applied = applyRoll(
@@ -993,6 +1043,8 @@ export async function startGameIntent(
       finishedAt: null,
       activeMove: null,
       activeDiceRoll: null,
+      rerollAvailableAt: null,
+      rerollDeadlineAt: null,
       turnPhase: "waitingForRoll",
       ...turnTiming(now, ROLL_DECISION_SECONDS),
       turnVersion: nextVersion,
@@ -1229,6 +1281,8 @@ export function createInitialGameForTests(overrides: Partial<DocumentData> = {})
     turnVersion: 1,
     rerollsUsed: {},
     rerollConfig: rerollPricingForStorage(DEFAULT_REROLL_PRICING),
+    rerollAvailableAt: null,
+    rerollDeadlineAt: null,
     lastActionId: "",
     recentActionIds: [],
     aiControlledPlayers: [],

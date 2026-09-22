@@ -30,6 +30,8 @@ Map<String, dynamic> _playingGame({
     'turnVersion': 4,
     'turnStartedAt': Timestamp.fromMillisecondsSinceEpoch(1000),
     'turnDurationSeconds': 30,
+    'rerollAvailableAt': Timestamp.fromMillisecondsSinceEpoch(1800),
+    'rerollDeadlineAt': Timestamp.fromMillisecondsSinceEpoch(4800),
     'rerollConfig': rerollConfig ?? _testPricing.toMap(),
     'rerollsUsed': rerollsUsed,
     'activeDiceRoll': {
@@ -87,6 +89,7 @@ void main() {
           isHumanControlled: true,
           isDiceRolling: false,
           requestPending: false,
+          isWindowOpen: true,
           pricing: _testPricing,
           uses: 1,
           coins: 60,
@@ -102,6 +105,7 @@ void main() {
           isHumanControlled: true,
           isDiceRolling: false,
           requestPending: false,
+          isWindowOpen: true,
           pricing: _testPricing,
           uses: 0,
           coins: 10,
@@ -114,6 +118,7 @@ void main() {
           isHumanControlled: true,
           isDiceRolling: false,
           requestPending: false,
+          isWindowOpen: true,
           pricing: _testPricing,
           uses: 3,
           coins: 999,
@@ -126,6 +131,7 @@ void main() {
           isHumanControlled: false,
           isDiceRolling: false,
           requestPending: false,
+          isWindowOpen: true,
           pricing: _testPricing,
           uses: 0,
           coins: 999,
@@ -138,11 +144,86 @@ void main() {
           isHumanControlled: true,
           isDiceRolling: true,
           requestPending: false,
+          isWindowOpen: true,
           pricing: _testPricing,
           uses: 0,
           coins: 999,
         ),
         RerollAvailability.rolling,
+      );
+    });
+
+    test('requires the server-authored interaction window to be open', () {
+      expect(
+        rerollAvailability(
+          isActionContext: true,
+          isHumanControlled: true,
+          isDiceRolling: false,
+          requestPending: false,
+          isWindowOpen: false,
+          pricing: _testPricing,
+          uses: 0,
+          coins: 999,
+        ),
+        RerollAvailability.unavailableContext,
+      );
+      expect(
+        isRerollWindowOpen(
+          availableAt: DateTime.fromMillisecondsSinceEpoch(1800),
+          deadlineAt: DateTime.fromMillisecondsSinceEpoch(4800),
+          now: DateTime.fromMillisecondsSinceEpoch(4799),
+        ),
+        isTrue,
+      );
+      expect(
+        isRerollWindowOpen(
+          availableAt: DateTime.fromMillisecondsSinceEpoch(1800),
+          deadlineAt: DateTime.fromMillisecondsSinceEpoch(4800),
+          now: DateTime.fromMillisecondsSinceEpoch(4800),
+        ),
+        isFalse,
+      );
+    });
+
+    test('hides local action for remote, AI, or committed-move contexts', () {
+      expect(
+        rerollAvailability(
+          isActionContext: false,
+          isHumanControlled: true,
+          isDiceRolling: false,
+          requestPending: false,
+          isWindowOpen: true,
+          pricing: _testPricing,
+          uses: 0,
+          coins: 999,
+        ),
+        RerollAvailability.unavailableContext,
+      );
+      expect(
+        rerollAvailability(
+          isActionContext: true,
+          isHumanControlled: false,
+          isDiceRolling: false,
+          requestPending: false,
+          isWindowOpen: true,
+          pricing: _testPricing,
+          uses: 0,
+          coins: 999,
+        ),
+        RerollAvailability.aiControlled,
+      );
+      expect(
+        rerollAvailability(
+          isActionContext: true,
+          isHumanControlled: true,
+          isDiceRolling: false,
+          requestPending: true,
+          isWindowOpen: true,
+          pricing: _testPricing,
+          uses: 0,
+          coins: 999,
+        ),
+        RerollAvailability.requestPending,
       );
     });
   });

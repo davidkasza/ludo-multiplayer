@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/ludo_controller.dart';
 import '../../game/dice_skin.dart';
 import '../../theme/app_colors.dart';
+import 'reroll_control.dart';
 import 'rolling_dice_ui.dart';
 
 class TurnStatusCard extends StatelessWidget {
@@ -123,16 +124,21 @@ class TurnStatusCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          GestureDetector(
-            onTap: c.canRoll ? () => c.rollDice(cheatDiceValue) : null,
-            child: RollingDiceUI(
-              value: c.visualDiceValue ?? game?.diceValue ?? 0,
-              isRolling: c.isDiceRolling,
-              animationKey: c.diceAnimationKey,
-              initialProgress: c.diceRollInitialProgress,
-              rollDuration: Duration(milliseconds: c.diceRollDurationMs),
-              size: 42,
-              skin: diceSkin,
+          TurnActionSlot(
+            reroll: c.shouldShowRerollControl
+                ? RerollControl(controller: c)
+                : null,
+            dice: GestureDetector(
+              onTap: c.canRoll ? () => c.rollDice(cheatDiceValue) : null,
+              child: RollingDiceUI(
+                value: c.visualDiceValue ?? game?.diceValue ?? 0,
+                isRolling: c.isDiceRolling,
+                animationKey: c.diceAnimationKey,
+                initialProgress: c.diceRollInitialProgress,
+                rollDuration: Duration(milliseconds: c.diceRollDurationMs),
+                size: 42,
+                skin: diceSkin,
+              ),
             ),
           ),
         ],

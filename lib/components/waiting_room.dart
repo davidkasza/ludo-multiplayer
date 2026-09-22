@@ -10,6 +10,7 @@ import '../game/ludo_palette.dart';
 import '../models/ludo_models.dart';
 import '../theme/app_colors.dart';
 import 'cyber_background.dart';
+import 'waiting_room/board_style_selector.dart';
 
 class WaitingRoom extends StatefulWidget {
   final LudoController controller;
@@ -500,12 +501,12 @@ class _WaitingRoomState extends State<WaitingRoom> {
               title: 'Game settings',
               child: Column(
                 children: [
-                  _SettingDropdown<String>(
-                    label: 'Board',
-                    value: boardId,
+                  BoardStyleSelector(
+                    selectedBoardId: boardId,
                     enabled: isHost,
-                    items: LudoBoardThemeResolver.selectionLabels,
-                    onChanged: (value) {
+                    seatColorIds: controller.seatColorIds,
+                    maxPlayers: isHost ? _draftMaxPlayers : game.maxPlayers,
+                    onSelected: (value) {
                       setSheetState(() => boardId = value);
                       _changeBoard(value);
                     },
@@ -1416,75 +1417,6 @@ class _BottomSheetShell extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _SettingDropdown<T> extends StatelessWidget {
-  final String label;
-  final T value;
-  final bool enabled;
-  final Map<T, String> items;
-  final ValueChanged<T> onChanged;
-
-  const _SettingDropdown({
-    required this.label,
-    required this.value,
-    required this.enabled,
-    required this.items,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withOpacity(0.58),
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          decoration: BoxDecoration(
-            color: AppColors.background,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white.withOpacity(0.16)),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              dropdownColor: AppColors.panelBackground,
-              icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
-              isExpanded: true,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
-              items: items.entries
-                  .map(
-                    (entry) => DropdownMenuItem<T>(
-                      value: entry.key,
-                      child: Text(entry.value),
-                    ),
-                  )
-                  .toList(),
-              onChanged: enabled
-                  ? (newValue) {
-                      if (newValue != null) onChanged(newValue);
-                    }
-                  : null,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

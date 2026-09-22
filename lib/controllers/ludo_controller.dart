@@ -457,48 +457,30 @@ class LudoController extends ChangeNotifier
 
   int? get currentRerollCost => game?.rerollCostFor(user?.uid ?? '');
 
+  bool get isRerollWindowOpenNow => isRerollWindowOpen(
+    availableAt: game?.rerollAvailableAt?.toDate(),
+    deadlineAt: game?.rerollDeadlineAt?.toDate(),
+    now: estimatedServerNow,
+  );
+
+  String? get currentRerollActionKey => game?.activeDiceRoll?.key;
+
   RerollAvailability get currentRerollAvailability => rerollAvailability(
     isActionContext: _isRerollActionContext,
     isHumanControlled: isMyTurn,
     isDiceRolling: isDiceRolling,
     requestPending: rerollActionPending,
+    isWindowOpen: isRerollWindowOpenNow,
     pricing: game?.rerollPricing,
     uses: myRerollsUsed,
     coins: profileCoins,
   );
 
   bool get shouldShowRerollControl =>
-      _isRerollActionContext && isMyTurn && !isDiceRolling;
+      currentRerollAvailability == RerollAvailability.available;
 
   bool get canUseReroll =>
       currentRerollAvailability == RerollAvailability.available;
-
-  bool get canPassNoValidMove =>
-      _isRerollActionContext &&
-      game?.turnPhase == LudoGame.waitingForRerollDecision &&
-      !isDiceRolling &&
-      !rerollActionPending;
-
-  String? get rerollUnavailableLabel {
-    switch (currentRerollAvailability) {
-      case RerollAvailability.limitReached:
-        final maximum = game?.rerollPricing?.maxUsesPerMatch;
-        return maximum == null
-            ? 'Reroll limit reached'
-            : '$maximum/$maximum Rerolls used';
-      case RerollAvailability.insufficientCoins:
-        return 'Not enough coins';
-      case RerollAvailability.requestPending:
-        return 'Processing...';
-      case RerollAvailability.configurationUnavailable:
-        return 'Reroll unavailable';
-      case RerollAvailability.available:
-      case RerollAvailability.unavailableContext:
-      case RerollAvailability.aiControlled:
-      case RerollAvailability.rolling:
-        return null;
-    }
-  }
 
   bool get isHost {
     if (game == null || user == null) return false;

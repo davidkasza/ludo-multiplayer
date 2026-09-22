@@ -57,20 +57,6 @@ class GameplayFunctions {
     });
   }
 
-  Future<Map<String, dynamic>> passNoValidMove({
-    required String roomCode,
-    required int expectedTurnVersion,
-    required String expectedActionId,
-    required String actionId,
-  }) {
-    return _call('passNoValidMove', {
-      'roomCode': roomCode,
-      'expectedTurnVersion': expectedTurnVersion,
-      'expectedActionId': expectedActionId,
-      'actionId': actionId,
-    });
-  }
-
   Future<Map<String, dynamic>> processTurnTimeout({
     required String roomCode,
     required int expectedTurnVersion,
